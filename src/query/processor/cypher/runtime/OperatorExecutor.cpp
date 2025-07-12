@@ -114,7 +114,9 @@ void OperatorExecutor::AllNodeScan(SharedBuffer &buffer, std::string jsonPlan, G
         json nodeData;
         auto nodeId = it.first;
         NodeBlock *node = nodeManager.get(nodeId);
-        std::string value(node->getMetaPropertyHead()->value);
+        MetaPropertyLink* metaProperty = node->getMetaPropertyHead();
+        std::string value(metaProperty->value);
+        delete metaProperty;  // Free the allocated MetaPropertyLink
         if (value == to_string(gc.partitionID)) {
             nodeData["partitionID"] = value;
             std::map<std::string, char*> properties = node->getAllProperties();
@@ -133,28 +135,40 @@ void OperatorExecutor::AllNodeScan(SharedBuffer &buffer, std::string jsonPlan, G
         }
     }
     buffer.add("-1");
+
 }
 
 void OperatorExecutor::NodeScanByLabel(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     json query = json::parse(jsonPlan);
     NodeManager nodeManager(gc);
+    LabelIndexManager labelIndexManager(nodeManager.getDbPrefix() + "_node_label_index_mapping.db", nodeManager.getDbPrefix() + "_node_label_bit_map.db");
 
-    for (auto it : nodeManager.nodeIndex) {
+
+    auto nodeIndices =  labelIndexManager.getNodesWithLabel(labelIndexManager.getOrCreateLabelID( query["Label"]));
+
+    // get nodeIds from nodeManager
+
+    for (auto nodeIndex :nodeIndices ) {
         json nodeData;
-        auto nodeId = it.first;
-        NodeBlock *node = nodeManager.get(nodeId);
-        string label = node->getLabel();
+        NodeBlock *node = nodeManager.getByNodeIndex(nodeIndex);
         std::string value(node->getMetaPropertyHead()->value);
 
         std::map<std::string, char*> properties = node->getAllProperties();
-        auto labelIt = properties.find("type");
-        std::string nodeLabel = (labelIt != properties.end() && labelIt->second != nullptr) ?
-        std::string(labelIt->second) : "";
 
-        execution_logger.debug(value + " " + nodeLabel + " " + to_string(gc.partitionID) + " " +
-            query["Label"].get<std::string>());
+        nodeData["partitionID"] = value;
+        for (auto property : properties) {
+            nodeData[property.first] = property.second;
+        }
+        for (auto& [key, value] : properties) {
+            delete[] value;  // Free each allocated char* array
+        }
+        properties.clear();
+        json data;
+        string variable = query["variable"];
+        data[variable] = nodeData;
+        buffer.add(data.dump());
 
-        if (value == to_string(gc.partitionID) && nodeLabel == std::string(query["Label"])) {
+        if (value == to_string(gc.partitionID)) {
             nodeData["partitionID"] = value;
             std::map<std::string, char*> properties = node->getAllProperties();
             for (auto property : properties) {
@@ -169,11 +183,11 @@ void OperatorExecutor::NodeScanByLabel(SharedBuffer &buffer, std::string jsonPla
             string variable = query["variable"];
             data[variable] = nodeData;
             buffer.add(data.dump());
+            data.clear();
         }
     }
     buffer.add("-1");
 }
-
 
 void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     json query = json::parse(jsonPlan);
@@ -210,23 +224,48 @@ void OperatorExecutor::Filter(SharedBuffer &buffer, std::string jsonPlan, GraphC
     // Launch the method in a new thread
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
 
+    const size_t BATCH_SIZE = 100;
     auto condition = query["condition"];
     FilterHelper FilterHelper(condition.dump());
+    std::vector<std::string> batch;
     while (true) {
         string raw = sharedBuffer.get();
         if (raw == "-1") {
+            // Process remaining batch
+            std::vector<std::future<bool>> futures;
+            for (const auto& item : batch) {
+                futures.push_back(std::async(std::launch::async, [&FilterHelper, &item]() {
+                    return FilterHelper.evaluate(item);
+                }));
+            }
+            for (size_t i = 0; i < batch.size(); ++i) {
+                if (futures[i].get()) {
+                    buffer.add(batch[i]);
+                }
+            }
             buffer.add(raw);
             result.join();
             break;
         }
-        if (FilterHelper.evaluate(raw)) {
-            buffer.add(raw);
+        batch.push_back(raw);
+        if (batch.size() >= BATCH_SIZE) {
+            std::vector<std::future<bool>> futures;
+            for (const auto& item : batch) {
+                futures.push_back(std::async(std::launch::async, [&FilterHelper, &item]() {
+                    return FilterHelper.evaluate(item);
+                }));
+            }
+            for (size_t i = 0; i < batch.size(); ++i) {
+                if (futures[i].get()) {
+                    buffer.add(batch[i]);
+                }
+            }
+            batch.clear();
         }
     }
 }
 
 void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
-    execution_logger.debug("UndirectedRelationshipTypeScan: Start");
     json query = json::parse(jsonPlan);
     NodeManager nodeManager(gc);
 
@@ -240,36 +279,40 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         isDirected = true;
     }
     int count = 1;
-    for (long i = 1; i < localRelationCount; i++) {
-        execution_logger.debug("UndirectedRelationshipTypeScan: Processing local relation " + std::to_string(i));
+
+    execution_logger.debug("UndirectedRelationshipTypeScan: Initializing localLabelIndexManager");
+    LabelIndexManager localLabelIndexManager(nodeManager.getDbPrefix() + "local_relation_label_index_mapping.db",nodeManager.getDbPrefix() + "local_relation_label_bit_map.db");
+
+    execution_logger.debug("UndirectedRelationshipTypeScan: Getting edgeIndices for relType: " + std::string(query["relType"]));
+    auto edgeIndices =  localLabelIndexManager.getNodesWithLabel(localLabelIndexManager.getOrCreateLabelID( query["relType"]));
+    execution_logger.debug("UndirectedRelationshipTypeScan: Number of local edgeIndices found: " + std::to_string(edgeIndices.size()));
+
+    for (auto edgeIndex :edgeIndices ) {
+        execution_logger.debug("UndirectedRelationshipTypeScan: Processing local relation " + std::to_string(edgeIndex));
         json startNodeData;
         json destNodeData;
         json relationData;
-        RelationBlock* relation = RelationBlock::getLocalRelation(i*RelationBlock::BLOCK_SIZE);
-
+        RelationBlock* relation = RelationBlock::getLocalRelation(edgeIndex*RelationBlock::BLOCK_SIZE);
+        execution_logger.debug("line 253");
         std::map<std::string, char*> relProperties = relation->getAllProperties();
-        std::string relTypeValue;
-
-        auto typeIt = relProperties.find("relationship_type");
-
-        if (typeIt != relProperties.end() && typeIt->second != nullptr) {
-            relTypeValue = std::string(typeIt->second);
-        } else {
-            auto altTypeIt = relProperties.find("type");
-            if (altTypeIt != relProperties.end() && altTypeIt->second != nullptr) {
-                relTypeValue = std::string(altTypeIt->second);
-            }
-        }
-
-     if (relTypeValue != query["relType"].get<std::string>()) {
+        execution_logger.debug("line 255");
+        if (relation->getLocalRelationshipType() != query["relType"]) {
+            execution_logger.debug("UndirectedRelationshipTypeScan: Skipping local relation " + std::to_string(edgeIndex) + " due to relType mismatch");
             continue;
         }
+
+
         NodeBlock* startNode = relation->getSource();
         NodeBlock* destNode = relation->getDestination();
+        execution_logger.debug("UndirectedRelationshipTypeScan: Start node ID: " + startNode->id);
+        execution_logger.debug("UndirectedRelationshipTypeScan: Dest node ID: " + destNode->id);
 
-        std::string startPid(startNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* startMetaProperty = startNode->getMetaPropertyHead();
+        std::string startPid(startMetaProperty->value);
+        delete startMetaProperty;
         startNodeData["partitionID"] = startPid;
         std::map<std::string, char*> startProperties = startNode->getAllProperties();
+        execution_logger.debug("UndirectedRelationshipTypeScan: Start node properties count: " + std::to_string(startProperties.size()));
         for (auto property : startProperties) {
             startNodeData[property.first] = property.second;
         }
@@ -278,9 +321,12 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         }
         startProperties.clear();
 
-        std::string destPid(destNode->getMetaPropertyHead()->value);
+        MetaPropertyLink *destMetaProperty = destNode->getMetaPropertyHead();
+        std::string destPid(destMetaProperty->value);
+        delete destMetaProperty;
         destNodeData["partitionID"] = destPid;
         std::map<std::string, char*> destProperties = destNode->getAllProperties();
+        execution_logger.debug("UndirectedRelationshipTypeScan: Dest node properties count: " + std::to_string(destProperties.size()));
         for (auto property : destProperties) {
             destNodeData[property.first] = property.second;
         }
@@ -289,6 +335,7 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         }
         destProperties.clear();
 
+        execution_logger.debug("UndirectedRelationshipTypeScan: Relation properties count: " + std::to_string(relProperties.size()));
         for (auto property : relProperties) {
             relationData[property.first] = property.second;
         }
@@ -305,6 +352,7 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         rightDirectionData[start] = startNodeData;
         rightDirectionData[dest] = destNodeData;
         rightDirectionData[rel] = relationData;
+        execution_logger.debug("UndirectedRelationshipTypeScan: Adding rightDirectionData for local relation " + std::to_string(edgeIndex));
         buffer.add(rightDirectionData.dump());
 
         if (!isDirected) {
@@ -312,33 +360,30 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
             leftDirectionData[start] = destNodeData;
             leftDirectionData[dest] = startNodeData;
             leftDirectionData[rel] = relationData;
+            execution_logger.debug("UndirectedRelationshipTypeScan: Adding leftDirectionData for local relation " + std::to_string(edgeIndex));
             buffer.add(leftDirectionData.dump());
         }
         count++;
     }
 
-    int central = 1;
-    for (long i = 1; i < centralRelationCount; i++) {
+    execution_logger.debug("UndirectedRelationshipTypeScan: Initializing centralLabelIndexManager");
+    LabelIndexManager centralLabelIndexManager(nodeManager.getDbPrefix() + "central_relation_label_index_mapping.db",nodeManager.getDbPrefix() + "central_relation_label_bit_map.db");
+
+    execution_logger.debug("UndirectedRelationshipTypeScan: Getting edgeIndices for central relType: " + std::string(query["relType"]));
+    edgeIndices =  centralLabelIndexManager.getNodesWithLabel(centralLabelIndexManager.getOrCreateLabelID( query["relType"]));
+    execution_logger.debug("UndirectedRelationshipTypeScan: Number of central edgeIndices found: " + std::to_string(edgeIndices.size()));
+
+    for (auto edgeIndex :edgeIndices ) {
+        execution_logger.debug("UndirectedRelationshipTypeScan: Processing central relation " + std::to_string(edgeIndex));
         json startNodeData;
         json destNodeData;
         json relationData;
-        RelationBlock* relation = RelationBlock::getCentralRelation(i * RelationBlock::CENTRAL_BLOCK_SIZE);
+        RelationBlock* relation = RelationBlock::getCentralRelation(edgeIndex * RelationBlock::CENTRAL_BLOCK_SIZE);
 
         std::map<std::string, char*> relProperties = relation->getAllProperties();
-        std::string relTypeValue;
 
-        auto typeIt = relProperties.find("relationship_type");
-
-        if (typeIt != relProperties.end() && typeIt->second != nullptr) {
-            relTypeValue = std::string(typeIt->second);
-        } else {
-            auto altTypeIt = relProperties.find("type");
-            if (altTypeIt != relProperties.end() && altTypeIt->second != nullptr) {
-                relTypeValue = std::string(altTypeIt->second);
-            }
-        }
-
-        if (relTypeValue != query["relType"].get<std::string>()) {
+        if (relation->getCentralRelationshipType() != query["relType"]) {
+            execution_logger.debug("UndirectedRelationshipTypeScan: Skipping central relation " + std::to_string(edgeIndex) + " due to relType mismatch");
             for (auto& [key, value] : relProperties) {
                 delete[] value;
             }
@@ -348,6 +393,7 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
 
         std::string pid(relation->getMetaPropertyHead()->value);
         if (pid != to_string(gc.partitionID)) {
+            execution_logger.debug("UndirectedRelationshipTypeScan: Skipping central relation " + std::to_string(edgeIndex) + " due to partitionID mismatch");
             for (auto& [key, value] : relProperties) {
                 delete[] value;
             }
@@ -358,9 +404,12 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         NodeBlock* startNode = relation->getSource();
         NodeBlock* destNode = relation->getDestination();
 
-        std::string startPid(startNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* startMetaProperty = startNode->getMetaPropertyHead();
+        std::string startPid(startMetaProperty->value);
+        delete startMetaProperty;
         startNodeData["partitionID"] = startPid;
         std::map<std::string, char*> startProperties = startNode->getAllProperties();
+        execution_logger.debug("UndirectedRelationshipTypeScan: Central start node properties count: " + std::to_string(startProperties.size()));
         for (auto property : startProperties) {
             startNodeData[property.first] = property.second;
         }
@@ -369,9 +418,12 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         }
         startProperties.clear();
 
-        std::string destPid(destNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* destMetaProperty = destNode->getMetaPropertyHead();
+        std::string destPid(destMetaProperty->value);
+        delete destMetaProperty;
         destNodeData["partitionID"] = destPid;
         std::map<std::string, char*> destProperties = destNode->getAllProperties();
+        execution_logger.debug("UndirectedRelationshipTypeScan: Central dest node properties count: " + std::to_string(destProperties.size()));
         for (auto property : destProperties) {
             destNodeData[property.first] = property.second;
         }
@@ -380,14 +432,15 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         }
         destProperties.clear();
 
-        std::map<std::string, char*> relProperties2 = relation->getAllProperties();
-        for (auto property : relProperties2) {
+
+        execution_logger.debug("UndirectedRelationshipTypeScan: Central relation properties count: " + std::to_string(relProperties.size()));
+        for (auto property : relProperties) {
             relationData[property.first] = property.second;
         }
-        for (auto& [key, value] : relProperties2) {
+        for (auto& [key, value] : relProperties) {
             delete[] value;  // Free each allocated char* array
         }
-        relProperties2.clear();
+        relProperties.clear();
 
         json rightDirectionData;
         string start = query["sourceVariable"];
@@ -397,6 +450,7 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
         rightDirectionData[start] = startNodeData;
         rightDirectionData[dest] = destNodeData;
         rightDirectionData[rel] = relationData;
+        execution_logger.debug("UndirectedRelationshipTypeScan: Adding rightDirectionData for central relation " + std::to_string(edgeIndex));
         buffer.add(rightDirectionData.dump());
 
         if (!isDirected) {
@@ -404,13 +458,16 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
             leftDirectionData[start] = destNodeData;
             leftDirectionData[dest] = startNodeData;
             leftDirectionData[rel] = relationData;
+            execution_logger.debug("UndirectedRelationshipTypeScan: Adding leftDirectionData for central relation " + std::to_string(edgeIndex));
             buffer.add(leftDirectionData.dump());
         }
-        central++;
     }
+    execution_logger.debug("UndirectedRelationshipTypeScan: Finished, adding -1 to buffer");
     buffer.add("-1");
+    delete &localLabelIndexManager;
+    delete &centralLabelIndexManager;
+    delete &nodeManager;
 }
-
 void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     json query = json::parse(jsonPlan);
     NodeManager nodeManager(gc);
@@ -433,7 +490,9 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         NodeBlock* startNode = relation->getSource();
         NodeBlock* destNode = relation->getDestination();
 
-        std::string startPid(startNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* startMetaProperty = startNode->getMetaPropertyHead();
+        std::string startPid(startMetaProperty->value);
+        delete startMetaProperty;
         startNodeData["partitionID"] = startPid;
         std::map<std::string, char*> startProperties = startNode->getAllProperties();
         for (auto property : startProperties) {
@@ -444,7 +503,9 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         }
         startProperties.clear();
 
-        std::string destPid(destNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* destMetaProperty = destNode->getMetaPropertyHead();
+        std::string destPid(destMetaProperty->value);
+        delete destMetaProperty;
         destNodeData["partitionID"] = destPid;
         std::map<std::string, char*> destProperties = destNode->getAllProperties();
         for (auto property : destProperties) {
@@ -474,6 +535,8 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         rightDirectionData[rel] = relationData;
         buffer.add(rightDirectionData.dump());
 
+
+
         if (!isDirected) {
             json leftDirectionData;
             leftDirectionData[start] = destNodeData;
@@ -482,6 +545,10 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
             buffer.add(leftDirectionData.dump());
         }
         count++;
+        // free memory for relation
+        delete relation->getSource();
+        delete relation->getDestination();
+        delete relation;
     }
 
     int central = 1;
@@ -490,7 +557,10 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         json destNodeData;
         json relationData;
         RelationBlock* relation = RelationBlock::getCentralRelation(i*RelationBlock::CENTRAL_BLOCK_SIZE);
-        std::string pid(relation->getMetaPropertyHead()->value);
+
+        MetaPropertyEdgeLink* relationMetaProperty = relation->getMetaPropertyHead();
+        std::string pid(relationMetaProperty->value);
+        delete relationMetaProperty;
         if (pid != to_string(gc.partitionID)) {
             continue;
         }
@@ -498,7 +568,9 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         NodeBlock* startNode = relation->getSource();
         NodeBlock* destNode = relation->getDestination();
 
-        std::string startPid(startNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* startNodeMetaProperty = startNode->getMetaPropertyHead();
+        std::string startPid(startNodeMetaProperty->value);
+        delete startNodeMetaProperty;  // Free the allocated MetaPropertyLink
         startNodeData["partitionID"] = startPid;
         std::map<std::string, char*> startProperties = startNode->getAllProperties();
         for (auto property : startProperties) {
@@ -509,7 +581,9 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
         }
         startProperties.clear();
 
-        std::string destPid(destNode->getMetaPropertyHead()->value);
+        MetaPropertyLink* meta_property_link = destNode->getMetaPropertyHead();
+        std::string destPid = meta_property_link->value;
+        delete meta_property_link;  // Free the allocated MetaPropertyLink
         destNodeData["partitionID"] = destPid;
         std::map<std::string, char*> destProperties = destNode->getAllProperties();
         for (auto property : destProperties) {
@@ -547,6 +621,10 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
             buffer.add(leftDirectionData.dump());
         }
         central++;
+        // free memory for relation
+        delete relation->getSource();
+        delete relation->getDestination();
+        delete relation;
     }
     buffer.add("-1");
 }

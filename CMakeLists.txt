@@ -188,11 +188,13 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/frontend/core/executor/impl/CypherQueryExecutor.cpp
         src/query/processor/cypher/runtime/Aggregation.cpp
         src/query/processor/cypher/runtime/AggregationFactory.cpp
+        src/nativestore/LabelndexManger.cpp
+        src/nativestore/LabelIndexManager.h
 
 )
 
 if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
-add_compile_options(-DUNIT_TEST)
+    add_compile_options(-DUNIT_TEST)
 endif ()
 
 file(GLOB GENERATED_SRC /home/ubuntu/software/antlr/*.cpp)
