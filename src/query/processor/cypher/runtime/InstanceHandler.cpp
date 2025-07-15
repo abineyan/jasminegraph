@@ -34,7 +34,9 @@ void InstanceHandler::handleRequest(int connFd, bool *loop_exit_p,
     int time = 0;
     while (true) {
         string raw = sharedBuffer.get();
+        instance_logger.info("Pulled from sharedBuffer: " + raw);
         if (raw == "-1") {
+            instance_logger.info("Received END signal (-1)");
             this->dataPublishToMaster(connFd, loop_exit_p, raw);
             instance_logger.info("Total time taken for query execution: " + std::to_string(time) + " ms");
             result.join();
@@ -44,12 +46,66 @@ void InstanceHandler::handleRequest(int connFd, bool *loop_exit_p,
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
         time += duration.count();
         this->dataPublishToMaster(connFd, loop_exit_p, raw);
+        instance_logger.info("Data published to master: " + raw);
         startTime = std::chrono::high_resolution_clock::now();
     }
 }
 
+//void InstanceHandler::dataPublishToMaster(int connFd, bool *loop_exit_p, std::string message) {
+//    if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::QUERY_DATA_START)) {
+//        *loop_exit_p = true;
+//        return;
+//    }
+//
+//    std::string start_ack(JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
+//    int return_status = recv(connFd, &start_ack[0], JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
+//    if (return_status > 0) {
+//        instance_logger.debug("Received data start ack: " + start_ack);
+//    } else {
+//        instance_logger.error("Error while reading start ack");
+//        *loop_exit_p = true;
+//        return;
+//    }
+//
+//    int message_length = message.length();
+//    int converted_number = htonl(message_length);
+//    instance_logger.debug("Sending content length" + to_string(converted_number));
+//    if (!Utils::send_int_wrapper(connFd, &converted_number, sizeof(converted_number))) {
+//        *loop_exit_p = true;
+//        return;
+//    }
+//
+//    std::string length_ack(JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(), 0);
+//    return_status = recv(connFd, &length_ack[0], JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(), 0);
+//    if (return_status > 0) {
+//        instance_logger.debug("Received content length ack: "+length_ack);
+//    } else {
+//        instance_logger.error("Error while reading content length ack");
+//        *loop_exit_p = true;
+//        return;
+//    }
+//
+//    if (!Utils::send_str_wrapper(connFd, message)) {
+//        *loop_exit_p = true;
+//        return;
+//    }
+//
+//    std::string success_ack(JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS.length(), 0);
+//    return_status = recv(connFd, &success_ack[0], JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS.length(), 0);
+//    if (return_status > 0) {
+//        instance_logger.debug("Received success ack: " + success_ack);
+//    } else {
+//        instance_logger.error("Error while reading content length ack");
+//        *loop_exit_p = true;
+//        return;
+//    }
+//}
+
 void InstanceHandler::dataPublishToMaster(int connFd, bool *loop_exit_p, std::string message) {
+    instance_logger.info("➡️ Sending to master: [" + message + "]");
+
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::QUERY_DATA_START)) {
+        instance_logger.error("❌ Failed to send QUERY_DATA_START");
         *loop_exit_p = true;
         return;
     }
@@ -57,17 +113,18 @@ void InstanceHandler::dataPublishToMaster(int connFd, bool *loop_exit_p, std::st
     std::string start_ack(JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
     int return_status = recv(connFd, &start_ack[0], JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
     if (return_status > 0) {
-        instance_logger.debug("Received data start ack: " + start_ack);
+        instance_logger.debug("✅ Received data start ack: " + start_ack);
     } else {
-        instance_logger.error("Error while reading start ack");
+        instance_logger.error("❌ Error while reading start ack");
         *loop_exit_p = true;
         return;
     }
 
     int message_length = message.length();
     int converted_number = htonl(message_length);
-    instance_logger.debug("Sending content length" + to_string(converted_number));
+    instance_logger.debug("📦 Sending content length: " + std::to_string(message_length));
     if (!Utils::send_int_wrapper(connFd, &converted_number, sizeof(converted_number))) {
+        instance_logger.error("❌ Failed to send message length");
         *loop_exit_p = true;
         return;
     }
@@ -75,14 +132,16 @@ void InstanceHandler::dataPublishToMaster(int connFd, bool *loop_exit_p, std::st
     std::string length_ack(JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(), 0);
     return_status = recv(connFd, &length_ack[0], JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(), 0);
     if (return_status > 0) {
-        instance_logger.debug("Received content length ack: "+length_ack);
+        instance_logger.debug("✅ Received content length ack: " + length_ack);
     } else {
-        instance_logger.error("Error while reading content length ack");
+        instance_logger.error("❌ Error while reading content length ack");
         *loop_exit_p = true;
         return;
     }
 
+    instance_logger.debug("📨 Sending payload message: [" + message + "]");
     if (!Utils::send_str_wrapper(connFd, message)) {
+        instance_logger.error("❌ Failed to send message");
         *loop_exit_p = true;
         return;
     }
@@ -90,10 +149,12 @@ void InstanceHandler::dataPublishToMaster(int connFd, bool *loop_exit_p, std::st
     std::string success_ack(JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS.length(), 0);
     return_status = recv(connFd, &success_ack[0], JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS.length(), 0);
     if (return_status > 0) {
-        instance_logger.debug("Received success ack: " + success_ack);
+        instance_logger.info("✅ Received success ack: " + success_ack);
     } else {
-        instance_logger.error("Error while reading content length ack");
+        instance_logger.error("❌ Error while reading success ack");
         *loop_exit_p = true;
         return;
     }
+
+    instance_logger.info("✅ Completed sending to master: [" + message + "]");
 }

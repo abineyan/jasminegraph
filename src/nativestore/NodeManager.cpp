@@ -52,8 +52,8 @@ NodeManager::NodeManager(GraphConfig gConfig) {
     // This needs to be set in order to prevent index DB key overflows
     // Expected maximum length of a key in the dataset
 
-    node_manager_logger.info("Derived nodesDBPath: " + nodesDBPath);
-    node_manager_logger.info("Derived index_db_loc: " + indexDBPath);
+    //node_manager_logger.info("Derived nodesDBPath: " + nodesDBPath);
+    //node_manager_logger.info("Derived index_db_loc: " + indexDBPath);
 
     if (gConfig.maxLabelSize) {
         setIndexKeySize(gConfig.maxLabelSize);
@@ -89,7 +89,7 @@ NodeManager::NodeManager(GraphConfig gConfig) {
     //            std::ios::binary);
     // TODO (tmkasun): set PropertyLink nextPropertyIndex after validating by modulus check from file number of bytes
 
-    node_manager_logger.info("NodesDB, PropertiesDB, and RelationsDB files opened (or created) successfully.");
+    //node_manager_logger.info("NodesDB, PropertiesDB, and RelationsDB files opened (or created) successfully.");
     //    unsigned int nextAddress;
     //    unsigned int propertyBlockAddress = 0;
     //    PropertyLink::propertiesDB->seekg(propertyBlockAddress * PropertyLink::PROPERTY_BLOCK_SIZE);
