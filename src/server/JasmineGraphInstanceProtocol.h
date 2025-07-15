@@ -141,7 +141,7 @@ class JasmineGraphInstanceProtocol {
     static const string HDFS_FILE_CHUNK_END_ACK;
 };
 
-const int INSTANCE_DATA_LENGTH = 300;
+const int INSTANCE_DATA_LENGTH = 350;
 const int FED_DATA_LENGTH = 300;
 const int INSTANCE_LONG_DATA_LENGTH = 1024;
 const int INSTANCE_FILE_BUFFER_LENGTH = 1024;

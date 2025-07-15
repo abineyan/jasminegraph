@@ -21,16 +21,21 @@ using namespace std;
 string ASTNode::print(int depth, string prefix, bool isLast) const {
     stringstream ss;
 
+    // Print prefix + branch symbol
     ss << prefix;
-    ss << (isLast ? "└───" : "├──");
-    ss << nodeType << ": " << value << "\n";
+    ss << (isLast ? "└── " : "├── ");
+    ss << nodeType;
+    if (!value.empty()) {
+        ss << ": " << value;
+    }
+    ss << "\n";
 
-    string result = ss.str();
-    prefix += (isLast ? "    " : "│   ");
+    string newPrefix = prefix + (isLast ? "    " : "│   ");
 
     for (size_t i = 0; i < elements.size(); ++i) {
-        result += elements[i]->print(depth + 1, prefix, i == elements.size() - 1);
+        bool childIsLast = (i == elements.size() - 1);
+        ss << elements[i]->print(depth + 1, newPrefix, childIsLast);
     }
 
-    return result;
+    return ss.str();
 }

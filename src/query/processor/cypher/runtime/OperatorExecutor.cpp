@@ -108,6 +108,7 @@ void OperatorExecutor::initializeMethodMap() {
 }
 
 void OperatorExecutor::AllNodeScan(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.info("AllNodeScan: Starting full scan");
     json query = json::parse(jsonPlan);
     NodeManager nodeManager(gc);
     for (auto it : nodeManager.nodeIndex) {
@@ -129,9 +130,11 @@ void OperatorExecutor::AllNodeScan(SharedBuffer &buffer, std::string jsonPlan, G
             json data;
             string variable = query["variables"];
             data[variable] = nodeData;
+            execution_logger.info("AllNodeScan: Adding node data to buffer: " + data.dump());
             buffer.add(data.dump());
         }
     }
+    execution_logger.info("AllNodeScan: Finished scan, adding -1 to buffer");
     buffer.add("-1");
 }
 
@@ -165,10 +168,12 @@ void OperatorExecutor::NodeScanByLabel(SharedBuffer &buffer, std::string jsonPla
 }
 
 void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.info("ProduceResult: Starting execution");
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
     json next = json::parse(nextOpt);
+    execution_logger.info("ProduceResult: Spawning thread for -> " + next["Operator"].get<std::string>());
     auto method = OperatorExecutor::methodMap[next["Operator"]];
     // Launch the method in a new thread
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
@@ -176,7 +181,9 @@ void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan,
     while (true) {
         string raw = sharedBuffer.get();
         if (raw == "-1") {
+            execution_logger.info("ProduceResult: Received end signal (-1), finishing");
             buffer.add(raw);
+            execution_logger.info("ProduceResult: Sent -1 to outer buffer");
             result.join();
             break;
         }
@@ -186,6 +193,7 @@ void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan,
         for (auto value : values) {
             data[value] = rawObj[value];
         }
+        execution_logger.info("ProduceResult: Forwarding variables: " + data.dump());
         buffer.add(data.dump());
     }
 }
@@ -1214,6 +1222,33 @@ void OperatorExecutor::Distinct(SharedBuffer &buffer, std::string jsonPlan, Grap
         }
     }
 }
+//######################## Changing this for OrderBy
+//struct Row {
+//    json data;
+//    std::string jsonStr;
+//    std::string sortKey;
+//    bool isAsc;
+//
+//    Row(const std::string& str, const std::string& key, bool asc)
+//        : jsonStr(str), sortKey(key), isAsc(asc) {
+//        data = json::parse(str);
+//    }
+//
+//    bool operator<(const Row& other) const {
+//        const auto& val1 = data[sortKey];
+//        const auto& val2 = other.data[sortKey];
+//
+//        bool result;
+//        if (val1.is_number_integer() && val2.is_number_integer()) {
+//            result = val1.get<int>() > val2.get<int>();
+//        } else if (val1.is_string() && val2.is_string()) {
+//            result = val1.get<std::string>() > val2.get<std::string>();
+//        } else {
+//            result = val1.dump() > val2.dump();
+//        }
+//        return isAsc ? result : !result;  // Flip for DESC
+//    }
+//};
 
 struct Row {
     json data;
@@ -1222,7 +1257,7 @@ struct Row {
     bool isAsc;
 
     Row(const std::string& str, const std::string& key, bool asc)
-        : jsonStr(str), sortKey(key), isAsc(asc) {
+            : jsonStr(str), sortKey(key), isAsc(asc) {
         data = json::parse(str);
     }
 
@@ -1252,15 +1287,20 @@ struct Row {
         } else {
             result = val1.dump() > val2.dump();
         }
-        return isAsc ? result : !result;  // Flip for DESC
+        return isAsc ? result : !result;
     }
 };
+
 
 void OperatorExecutor::OrderBy(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
     json next = json::parse(nextOpt);
+
+    execution_logger.info("OrderBy: Starting with key = " + query["variable"].get<std::string>() + ", order = " + query["order"].get<std::string>());
+    execution_logger.info("OrderBy: Calling child operator -> " + next["Operator"].get<std::string>());
+
     auto method = OperatorExecutor::methodMap[next["Operator"]];
 
     // Launch the method in a new thread
@@ -1274,13 +1314,17 @@ void OperatorExecutor::OrderBy(SharedBuffer &buffer, std::string jsonPlan, Graph
     std::priority_queue<Row> heap;
     while (true) {
         std::string jsonStr = sharedBuffer.get();
+        execution_logger.info("OrderBy: Received from buffer: " + jsonStr);
         if (jsonStr == "-1") {
+            execution_logger.info("OrderBy: Received end signal (-1), sending sorted results");
             while (!heap.empty()) {
+                execution_logger.info("OrderBy: Sending sorted row: " + heap.top().jsonStr);
                 buffer.add(heap.top().jsonStr);
                 heap.pop();
             }
             buffer.add(jsonStr);  // -1 close flag
             result.join();
+            execution_logger.info("OrderBy: Finished sending all sorted rows");
             break;
         }
 
@@ -1292,13 +1336,16 @@ void OperatorExecutor::OrderBy(SharedBuffer &buffer, std::string jsonPlan, Graph
                 execution_logger.warn("OrderBy: Sort key '" + sortKey + "' not found in row: " + jsonStr);
                 continue;
             }
+
+            execution_logger.info("OrderBy: Pushing row into heap with key '" + sortKey + "': " + nestedVal.dump());
             heap.push(row);
+
             if (heap.size() > MAX_SIZE) {
                 execution_logger.info("OrderBy: Heap size exceeded MAX_SIZE, popping");
                 heap.pop();
             }
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing JSON: " << e.what() << "\n";
+            execution_logger.error("OrderBy: Error parsing row: " + std::string(e.what()));
         }
     }
 }

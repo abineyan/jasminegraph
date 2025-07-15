@@ -33,6 +33,7 @@ inline const json* getNestedValuePtr(const json& obj, const std::string& dottedK
     while (start < dottedKey.size()) {
         size_t dot = dottedKey.find('.', start);
         std::string key = dottedKey.substr(start, dot - start);
+        cypher_logger.info("Accessing key: '" + key + "'");
         if (!current->is_object()) {
             cypher_logger.error("Current JSON is not an object at key: '" + key + "'");
             return nullptr;
@@ -48,6 +49,7 @@ inline const json* getNestedValuePtr(const json& obj, const std::string& dottedK
     }
     return current;
 }
+
 
 CypherQueryExecutor::CypherQueryExecutor() {}
 
@@ -93,6 +95,7 @@ void CypherQueryExecutor::execute() {
 
     ASTBuilder astBuilder;
     auto* ast = any_cast<ASTNode*>(astBuilder.visitOC_Cypher(parser.oC_Cypher()));
+    cypher_logger.info(ast->print());
 
     SemanticAnalyzer semanticAnalyzer;
     string queryPlan;
@@ -188,16 +191,19 @@ void CypherQueryExecutor::execute() {
                 BufferEntry(const std::string& v, size_t idx, const json& parsed, bool asc)
                         : value(v), bufferIndex(idx), data(parsed), isAsc(asc) {}
                 bool operator<(const BufferEntry& other) const {
+
                     const json* val1 = getNestedValuePtr(data, Operator::aggregateKey);
                     if (!val1) {
                         cypher_logger.error("Missing key in val1 for comparison: " + Operator::aggregateKey);
                         return false;  // or decide what fallback you want
                     }
+
                     const json* val2 = getNestedValuePtr(other.data, Operator::aggregateKey);
                     if (!val2) {
                         cypher_logger.error("Missing key in val2 for comparison: " + Operator::aggregateKey);
                         return false;
                     }
+
                     bool result;
                     if (val1->is_number_integer() && val2->is_number_integer()) {
                         result = val1->get<int>() > val2->get<int>();
@@ -206,29 +212,48 @@ void CypherQueryExecutor::execute() {
                     } else {
                         result = val1->dump() > val2->dump();  // fallback comparison
                     }
-                    return isAsc ? result : !result;  // Flip for DESC
+                    return isAsc ? result : !result;
+
                 }
             };
             bool isAsc = (Operator::aggregateType == AggregationFactory::ASC);
             std::priority_queue<BufferEntry> mergeQueue;  // Min-heap
+
+            cypher_logger.info("Aggregate Key: " + Operator::aggregateKey);
+            //std::vector<bool> isClosed(bufferPool.size(), false);
             while (true) {
+
                 if (closeFlag == numberOfPartitions) {
                     break;
                 }
                 for (size_t i = 0; i < bufferPool.size(); ++i) {
+
                     std::string value;
                     if (bufferPool[i]->tryGet(value)) {
                         if (value != "-1") {
                             try {
                                 json parsed = json::parse(value);
+                                cypher_logger.info("Buffer " + std::to_string(i) + " first keys: ");
+                                cypher_logger.info("Type of 'n': " + std::string(parsed["n"].type_name()));
+                                if (!parsed["n"].is_object()) {
+                                    cypher_logger.error("'n' is not an object");
+                                }
                                 const json *aggVal = getNestedValuePtr(parsed, Operator::aggregateKey);
                                 if (!aggVal) {
                                     cypher_logger.error("Missing key '" + Operator::aggregateKey
                                         + "' in JSON: " + value);
+
                                     continue;
                                 }
                                 BufferEntry entry{value, i, parsed, isAsc};
                                 mergeQueue.push(entry);
+
+                                cypher_logger.info("BufferEntry: value='" + entry.value +
+                                                   "', bufferIndex=" + std::to_string(entry.bufferIndex) +
+                                                   ", data=" + entry.data.dump() +
+                                                   ", isAsc=" + (entry.isAsc ? "true" : "false"));
+
+
                             } catch (const json::exception &e) {
                                 cypher_logger.error("JSON parse error: " + std::string(e.what()));
                                 continue;
@@ -239,7 +264,6 @@ void CypherQueryExecutor::execute() {
                     }
                 }
             }
-
             cypher_logger.info("START MASTER SORTING");
             cypher_logger.info(std::to_string(mergeQueue.size()));
             while (!mergeQueue.empty()) {
@@ -310,6 +334,7 @@ void CypherQueryExecutor::execute() {
                         closeFlag++;
                     } else {
                         count++;
+                        //cypher_logger.info("Writing to connFd: " + data + "buffer: " + std::to_string(i));
                         result_wr = write(connFd, data.c_str(), data.length());
                         result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                           Conts::CARRIAGE_RETURN_NEW_LINE.size());
