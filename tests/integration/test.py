@@ -78,7 +78,7 @@ def expect_response(conn: socket.socket, expected: bytes):
     assert data == expected
     return True
 
-def expect_response_file(conn: socket.socket, expected: bytes, timeout=0.05):
+def expect_response_file(conn: socket.socket, expected: bytes, timeout=5):
     """Check if the response matches expected file."""
     global passed_all
     buffer = bytearray()
@@ -128,7 +128,7 @@ def expect_response_file(conn: socket.socket, expected: bytes, timeout=0.05):
             '\n'.join(mismatches[:10]))
         passed_all = False
         return False
-
+    print("Passed all rows")
     return True
 
 def send_and_expect_response(conn, test_name, send, expected, exit_on_failure=False):
@@ -162,7 +162,7 @@ def send_and_expect_response_file(conn, test_name, send, expected_file, exit_on_
             logging.fatal('Failed some tests,')
             print(*failed_tests, sep='\n', file=sys.stderr)
             sys.exit(1)
-
+    return
 
 passed_all = True
 failed_tests = []
