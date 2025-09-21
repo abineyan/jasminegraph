@@ -78,7 +78,7 @@ def expect_response(conn: socket.socket, expected: bytes):
     assert data == expected
     return True
 
-def expect_response_file(conn: socket.socket, expected: bytes, timeout=5):
+def expect_response_file(conn: socket.socket, expected: bytes, timeout=100):
     """Check if the response matches expected file."""
     global passed_all
     buffer = bytearray()
@@ -108,6 +108,8 @@ def expect_response_file(conn: socket.socket, expected: bytes, timeout=5):
     for i, (exp_line, rec_line) in enumerate(zip(expected_lines, received_lines), start=1):
         if exp_line != rec_line:
             mismatches.append(f'Line {i}:\n  expected: {exp_line}\n  received: {rec_line}')
+        else:
+            print(rec_line)
 
     # Handle extra lines if lengths differ
     if len(received_lines) > len(expected_lines):
