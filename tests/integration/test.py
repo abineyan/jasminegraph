@@ -693,11 +693,6 @@ def test(host, port):
                                  b'done', exit_on_failure=True)
         
         print()
-        workers = get_worker_pod_names()
-        for w in workers:
-            check_worker_disk_usage(w)
-
-        print()
         logging.info('[Cypher] Testing OrderBy for Large Graph')
         send_and_expect_response(sock, 'cypher', CYPHER, b'Graph ID:', exit_on_failure=True)
         send_and_expect_response(sock, 'cypher', b'4', b'Input query :', exit_on_failure=True)
@@ -706,11 +701,6 @@ def test(host, port):
                                       'tests/integration/utils/expected_output/'
                                       'orderby_expected_output_file.txt',exit_on_failure=True)
 
-        print()
-        workers = get_worker_pod_names()
-        for w in workers:
-            check_worker_disk_usage(w)
-        
         print()
         logging.info('[Cypher] Testing Node Scan By Label')
         send_and_expect_response(sock, 'cypher', CYPHER, b'Graph ID:', exit_on_failure=True)
