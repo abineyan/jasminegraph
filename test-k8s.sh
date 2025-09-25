@@ -300,11 +300,11 @@ if [ "$exit_code" != '0' ]; then
     echo -e '\n\e[34;1mCaptured JasmineGraph Master Logs:\e[0m'
     cat "$MASTER_LOG"
 
-    echo -e '\n\e[33;1mWORKER-0 LOG:\e[0m' |& tee -a "$RUN_LOG"
-    kubectl logs deployment/jasminegraph-worker0-deployment |& tee -a "$RUN_LOG"
+    # echo -e '\n\e[33;1mWORKER-0 LOG:\e[0m' |& tee -a "$RUN_LOG"
+    # kubectl logs deployment/jasminegraph-worker0-deployment |& tee -a "$RUN_LOG"
 
-    echo -e '\n\e[33;1mWORKER-1 LOG:\e[0m' |& tee -a "$RUN_LOG"
-    kubectl logs deployment/jasminegraph-worker1-deployment |& tee -a "$RUN_LOG"
+    # echo -e '\n\e[33;1mWORKER-1 LOG:\e[0m' |& tee -a "$RUN_LOG"
+    # kubectl logs deployment/jasminegraph-worker1-deployment |& tee -a "$RUN_LOG"
 
     echo -e '\n\e[34;1m=== Node Resources (if available) ===\e[0m'
     kubectl top pods || echo "kubectl top not available"
