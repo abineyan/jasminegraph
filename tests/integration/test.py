@@ -16,6 +16,15 @@ import logging
 import os
 import time
 from utils.telnetScripts.validate_uploaded_graph import  test_graph_validation
+from kubernetes import client, config
+import subprocess
+
+# Load kubeconfig (works inside cluster too if you use in-cluster config)
+config.load_kube_config()
+
+v1 = client.CoreV1Api()
+
+
 
 logging.addLevelName(
     logging.INFO, f'\033[1;32m{logging.getLevelName(logging.INFO)}\033[1;0m')
@@ -50,6 +59,21 @@ ADHDFS = b'adhdfs'
 LINE_END = b'\r\n'
 CYPHER = b'cypher'
 
+def get_worker_pod_names():
+    pods = v1.list_namespaced_pod(namespace="default", label_selector="service=jasminegraph")
+    return [p.metadata.name for p in pods.items if "worker" in p.metadata.name]
+
+def check_worker_disk_usage(pod_name):
+    # Equivalent to: kubectl exec -it <pod> -- df -h /var/tmp
+    cmd = ["kubectl", "exec", pod_name, "--", "df", "-h", "/var/tmp"]
+    df_out = subprocess.check_output(cmd, text=True)
+
+    cmd = ["kubectl", "exec", pod_name, "--", "du", "-sh", "/var/tmp/jasminegraph"]
+    du_out = subprocess.check_output(cmd, text=True)
+
+    print(f"\n=== Disk usage for {pod_name} ===")
+    print(df_out)
+    print(du_out)
 
 # def expect_response(conn: socket.socket, expected: bytes):
 #     """Check if the response is equal to the expected response
@@ -667,6 +691,11 @@ def test(host, port):
                                  exit_on_failure=True)
         send_and_expect_response(sock, 'cypher', b'',
                                  b'done', exit_on_failure=True)
+        
+        print()
+        workers = get_worker_pod_names()
+        for w in workers:
+            check_worker_disk_usage(w)
 
         print()
         logging.info('[Cypher] Testing OrderBy for Large Graph')
@@ -677,6 +706,11 @@ def test(host, port):
                                       'tests/integration/utils/expected_output/'
                                       'orderby_expected_output_file.txt',exit_on_failure=True)
 
+        print()
+        workers = get_worker_pod_names()
+        for w in workers:
+            check_worker_disk_usage(w)
+        
         print()
         logging.info('[Cypher] Testing Node Scan By Label')
         send_and_expect_response(sock, 'cypher', CYPHER, b'Graph ID:', exit_on_failure=True)
