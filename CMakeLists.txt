@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.29.6)
 project(JasmineGraph)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -29,6 +29,7 @@ set(HEADERS globals.h
         src/frontend/core/executor/impl/StreamingTriangleCountExecutor.h
         src/frontend/core/factory/ExecutorFactory.h
         src/frontend/core/scheduler/JobScheduler.h
+        src/knowledgegraph/construction/Pipeline.h
         src/localstore/JasmineGraphHashMapLocalStore.h
         src/localstore/JasmineGraphLocalStore.h
         src/localstore/JasmineGraphLocalStoreFactory.h
@@ -121,6 +122,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/frontend/core/executor/impl/StreamingTriangleCountExecutor.cpp
         src/frontend/core/factory/ExecutorFactory.cpp
         src/frontend/core/scheduler/JobScheduler.cpp
+        src/knowledgegraph/construction/Pipeline.cpp
         src/localstore/JasmineGraphHashMapLocalStore.cpp
         src/localstore/JasmineGraphLocalStore.cpp
         src/localstore/JasmineGraphLocalStoreFactory.cpp
@@ -196,6 +198,28 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/frontend/core/executor/impl/CypherQueryExecutor.cpp
         src/query/processor/cypher/runtime/Aggregation.cpp
         src/query/processor/cypher/runtime/AggregationFactory.cpp
+        src/knowledgegraph/construction/Pipeline.cpp
+        src/knowledgegraph/construction/Pipeline.h
+        src/knowledgegraph/construction/VLLMTupleStreamer.cpp
+        src/knowledgegraph/construction/VLLMTupleStreamer.h
+        src/knowledgegraph/construction/OllamaTupleStreamer.cpp
+                src/knowledgegraph/construction/VLLMTupleStreamer.cpp
+
+        src/knowledgegraph/construction/OllamaTupleStreamer.h
+                src/knowledgegraph/construction/VLLMTupleStreamer.h
+
+        src/vectorStore/TextEmbedder.cpp
+        src/vectorStore/TextEmbedder.h
+        src/vectorStore/FaissIndex.cpp
+        src/vectorStore/FaissIndex.h
+        src/query/processor/semanticBeamSearch/SemanticBeamSearch.cpp
+        src/query/processor/semanticBeamSearch/SemanticBeamSearch.h
+        src/frontend/core/executor/impl/SemanticBeamSearchExecutor.cpp
+        src/frontend/core/executor/impl/SemanticBeamSearchExecutor.h
+        src/knowledgegraph/construction/VLLMTupleStreamer.cpp
+        src/knowledgegraph/construction/VLLMTupleStreamer.h
+        src/knowledgegraph/construction/TupleStreamer.cpp
+
 
 )
 
@@ -284,14 +308,28 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/lib/x86_64-linux-gnu/libflatb
 target_link_libraries(JasmineGraphLib PRIVATE /usr/lib/x86_64-linux-gnu/libjsoncpp.so)
 target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/libcppkafka.so)
 target_link_libraries(JasmineGraphLib PRIVATE /usr/local/libhdfs3/lib/libhdfs3.so)
+#target_link_libraries(JasmineGraphLib PRIVATE   /usr/local/lib/llama.cpp/build/bin/libllama.so  )
+
 target_link_libraries(JasmineGraph JasmineGraphLib)
 target_link_libraries(JasmineGraph curl)
 
+target_link_libraries(JasmineGraphLib PRIVATE OpenMP::OpenMP_CXX faiss openblas)
+target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss openblas)
+find_package(OpenMP REQUIRED)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss)
+    target_link_libraries(JasmineGraphLib PRIVATE  OpenMP::OpenMP_CXX)
+endif()
 include_directories(/usr/local/libhdfs3/include/hdfs/)
 include_directories(/usr/include/oneapi/)
 include_directories(/usr/local/parmetis/include/)
 include_directories(/usr/lib/x86_64-linux-gnu/openmpi/include/)
 include_directories(/usr/local/include/antlr4-runtime)
+include_directories(/usr/local/lib/llama.cpp/include/)
+include_directories(/usr/local/lib/llama.cpp)
+include_directories(/usr/local/lib/llama.cpp/ggml/include)
+include_directories(/usr/local/lib/faiss)
+
 link_directories(/usr/local/lib)
 include_directories(/usr/local/include/yaml-cpp)
 target_link_libraries(JasmineGraphLib PRIVATE m)
@@ -299,7 +337,12 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/libkubernetes.so)
 target_link_libraries(JasmineGraphLib PRIVATE yaml-cpp)
 target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
+target_link_libraries(JasmineGraphLib PRIVATE faiss)
 
+#target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/llama.cpp/build/libllama.so)
+
+
+#target_link_libraries(llama)
 
 if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
     # Include google test
