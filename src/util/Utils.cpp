@@ -24,6 +24,7 @@ limitations under the License.
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <regex>
 #include <sstream>
 #include <vector>
 
@@ -1783,6 +1784,7 @@ string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
     }
 }
 
+
 string Utils::getGraphDirection(std::string graphID, std::string host) {
     util_logger.info("Host:" + host + " Port:" + to_string(Conts::JASMINEGRAPH_BACKEND_PORT));
     bool result = true;
@@ -2048,4 +2050,20 @@ float  Utils::cosineSimilarity(const std::vector<float>& a, const std::vector<fl
     }
     if (normA == 0 || normB == 0) return 0.0f;
     return dot / (std::sqrt(normA) * std::sqrt(normB));
+}
+
+string Utils:: canonicalize(const std::string& input) {
+    std::string result = input;
+
+    // Convert to lowercase
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    // Replace non-alphanumeric characters with underscores
+    result = std::regex_replace(result, std::regex("[^a-z0-9]+"), "_");
+
+    // Remove leading/trailing underscores
+    result = std::regex_replace(result, std::regex("^_+|_+$"), "");
+
+    return result;
 }
