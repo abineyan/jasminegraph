@@ -15,26 +15,45 @@ limitations under the License.
 
 namespace Prompts {
 inline const std::string KNOWLEDGE_EXTRACTION = R"(
-You MUST extract **ALL** named entities and construct an RDF (Resource Description Framework) graph from the text.
-Do **NOT** summarize.
+You MUST extract **ALL** named entities and construct an RDF (Resource Description Framework) subgraph from this chunk of a larger text corpus.
 Do **NOT** skip any triples unless the subject or object is an ambiguous pronoun
 (he, she, it, they, them, this, that).
 
-Output format:
+
+Output format WITH relation metadata (ONLY when temporal and/or spatial information is explicitly present):
 [
-  [subject, predicate, object, subject_type, object_type],
+   [subject, predicate, object, subjectType, objectType, when, where],
   ...
 ]
 
 STRICT RULES:
-- Extract **every possible triple representing a relationship in the RDF graph** in the text, even if many.
+- Extract **every possible factual relation** in the text, even if many.
 - Continue until you have processed the **entire chunk** fully.
 - Do not stop early.
-- Do not guess missing types; mark unknown types as "unknown".
-- strict the types to one or two words
-- Output ONLY valid JSON.
-- The array MUST contain **all triples**, not a representative sample.
+- Predicates MUST be valid schema.org properties (canonical form only)
+- Prefer the MOST GENERAL valid schema.org superclass for entity types
+  (e.g., Person instead of Actor, Place instead of City)
+- Every tuple MUST contain 5 or more fields
+- Every field MUST be a non-empty string
+- NEVER use pronouns (He, She, It, They, etc.) as subject or object
+- Output ONLY valid JSON
 
-Now extract ALL triples from the text:
+WORKED EXAMPLE (FOLLOW EXACTLY):
+
+Input text:
+Apple Inc. was founded by Steve Jobs and Steve Wozniak in Cupertino.
+Tim Cook is the current CEO of Apple Inc.
+Annette Bening played Lady Macbeth in 1984 at the American Conservatory Theatre.
+
+Correct output:
+[
+  ["Apple Inc.", "founder", "Steve Jobs", "Organization", "Person"],
+  ["Apple Inc.", "founder", "Steve Wozniak", "Organization", "Person"],
+  ["Apple Inc.", "foundingLocation", "Cupertino", "Organization", "Place"],
+  ["Tim Cook", "jobTitle", "CEO", "Person", "DefinedTerm"],
+  ["Tim Cook", "worksFor", "Apple Inc.", "Person", "Organization"],
+["Annette Bening", "actor", "Lady Macbeth", "Person", "FictionalCharacter", "1984", "American Conservatory Theatre"],
+  ["Annette Bening", "performerIn", "American Conservatory Theatre", "Person", "Organization", "1984", "San Francisco"]
+
 )";
 }
