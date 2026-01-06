@@ -84,9 +84,11 @@ async def generate(request: Request):
     data = await request.json()
     model = data.get("model", "mock-llama")
     stream = data.get("stream", False)
+    prompt = data.get("prompt", "")
+    prompt = prompt.lower()
 
-    if not stream:
-        return JSONResponse(content={
+    if prompt.startswith("you must extract") and "rdf" in prompt:
+        response_content = {
             "model": model,
             "response": [
                 ["Alice","knows","Bob","Person","Person"],
@@ -94,7 +96,30 @@ async def generate(request: Request):
                 ["AcmeCorp","located_in","London","Organization","Location"]
             ],
             "done": True
-        })
+        }
+
+    elif prompt.startswith("you are a semantic beam search planner"):
+        response_content = {
+            "model": model,
+            "response": ["Plan: Retrieve relevant documents, rank by relevance, execute action."],
+            "done": True
+        }
+
+    elif prompt.startswith("you are an intelligent question-answering system"):
+        response_content = {
+            "model": model,
+            "response": ["This is the answer to your question."],
+            "done": True
+        }
+    else:
+        response_content = {
+            "model": model,
+            "response": ["No specific handler for this prompt."],
+            "done": True
+        }
+
+    if not stream:
+        return JSONResponse(content=response_content)
 
     return StreamingResponse(
         streamer(model),
