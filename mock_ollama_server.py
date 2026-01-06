@@ -108,7 +108,17 @@ async def generate(request: Request):
     elif prompt.startswith("you are an intelligent question-answering system"):
         response_content = {
             "model": model,
-            "response": ["This is the answer to your question."],
+            "response": 
+            {
+            "plan_type": "DIRECT",
+            "objectives": [
+                {
+                "id": "obj1",
+                "query": "Find the broadcast frequency of Radio City radio station",
+                "search_type": "SEMANTIC_BEAM_SEARCH"
+                }
+            ]
+            },
             "done": True
         }
     else:
