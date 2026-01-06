@@ -2513,20 +2513,21 @@ std::vector<std::string> Utils::getUniqueLLMRunners(const std::string &hostnameP
 
         if (token.empty()) continue;
 
-        // ===== Remove chunk count =====
-        // Example: "10.0.10.22:11450:10" → "10.0.10.22:11450"
-        //          "https://llm.com:4"   → "https://llm.com"
+        // ===== Remove chunk count if exists =====
+        // "10.0.10.22:11450:10" → "10.0.10.22:11450"
+        size_t colonCount = std::count(token.begin(), token.end(), ':');
+        if (colonCount >= 3) {
         size_t lastColon = token.rfind(':');
-        if (lastColon != std::string::npos) {
-            // Check whether the part after last colon is a number
-            std::string lastPart = token.substr(lastColon + 1);
-            bool isNumber = !lastPart.empty() &&
-                            std::all_of(lastPart.begin(), lastPart.end(), ::isdigit);
-            if (isNumber) {
-                token = token.substr(0, lastColon);
+            if (lastColon != std::string::npos) {
+                // Check whether the part after last colon is a number
+                std::string lastPart = token.substr(lastColon + 1);
+                bool isNumber = !lastPart.empty() &&
+                                std::all_of(lastPart.begin(), lastPart.end(), ::isdigit);
+                if (isNumber) {
+                    token = token.substr(0, lastColon);
+                }
             }
         }
-
         // Convert to lowercase for deduplication
         std::string key = token;
         std::transform(key.begin(), key.end(), key.begin(), ::tolower);
