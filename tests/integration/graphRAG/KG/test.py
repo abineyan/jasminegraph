@@ -271,6 +271,10 @@ def test_kg(text_folder, upload_file_script, host, port):
                                 "At what frequency does radio city broadcast?", host, port)
         print(sbs_raw)
 
+        graphrag_reponse = run_graphrag_query(str(graph_id),
+                                "When was Radio City started?", host, port)
+
+        print(graphrag_reponse)
 
     return graph_ids
 

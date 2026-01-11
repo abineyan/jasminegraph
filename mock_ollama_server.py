@@ -113,9 +113,10 @@ async def generate(request: Request):
     elif prompt.startswith("you are an intelligent question-answering system"):
         response_content = {
             "model": model,
-            "response": ["Plan: Retrieve relevant documents, rank by relevance, execute action."],
+            "response": "Radio City was started on 3 July 2001.",
             "done": True
         }
+        
     else:
         response_content = {
             "model": model,
