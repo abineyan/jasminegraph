@@ -116,7 +116,7 @@ async def generate(request: Request):
             "response": "Radio City was started on 3 July 2001.",
             "done": True
         }
-       
+
     else:
         response_content = {
             "model": model,

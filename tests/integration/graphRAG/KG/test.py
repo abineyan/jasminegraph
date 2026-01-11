@@ -275,7 +275,7 @@ def test_kg(text_folder, upload_file_script, host, port):
         graphrag_reponse = run_graphrag_query(str(graph_id),
                                 "When was Radio City started?", host, port)
 
-        print(graphrag_reponse)
+        logging.info(graphrag_reponse)
 
     return graph_ids
 
