@@ -84,22 +84,48 @@ async def generate(request: Request):
     data = await request.json()
     model = data.get("model", "mock-llama")
     stream = data.get("stream", False)
+    prompt = data.get("prompt", "")
+    prompt = prompt.lower()
+
+    if prompt.startswith("you must extract") and "rdf" in prompt and stream:
+        return StreamingResponse(
+            streamer(model),
+            media_type="application/x-ndjson"
+        )
+
+    if prompt.startswith("you are a semantic beam search planner"):
+        response_content = {
+            "model": model,
+            "response": 
+            {
+            "plan_type": "DIRECT",
+            "objectives": [
+                {
+                "id": "obj1",
+                "query": "Find the broadcast frequency of Radio City radio station",
+                "search_type": "SEMANTIC_BEAM_SEARCH"
+                }
+            ]
+            },
+            "done": True
+        }
+
+    elif prompt.startswith("you are an intelligent question-answering system"):
+        response_content = {
+            "model": model,
+            "response": "Radio City was started on 3 July 2001.",
+            "done": True
+        }
+
+    else:
+        response_content = {
+            "model": model,
+            "response": ["No specific handler for this prompt."],
+            "done": True
+        }
 
     if not stream:
-        return JSONResponse(content={
-            "model": model,
-            "response": [
-                ["Alice","knows","Bob","Person","Person"],
-                ["Bob","works_at","AcmeCorp","Person","Organization"],
-                ["AcmeCorp","located_in","London","Organization","Location"]
-            ],
-            "done": True
-        })
-
-    return StreamingResponse(
-        streamer(model),
-        media_type="application/x-ndjson"
-    )
+        return JSONResponse(content=response_content)
 
 
 def fake_embedding(text, dim=768):

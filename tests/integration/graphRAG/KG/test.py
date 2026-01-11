@@ -32,6 +32,7 @@ TEXT_FOLDER = "gold"
 
 # LLM runner configuration
 LLM_RUNNERS = f"http://{SERVER_IP}:11450:2"
+LLM_RUNNERS_SINGLE_CALL = f"http://{SERVER_IP}:11450"
 RUNNER_URLS = [u.strip() for u in LLM_RUNNERS.split(",") if u.strip()]
 REASONING_MODEL_URI = RUNNER_URLS[0] if RUNNER_URLS else None
 LLM_MODEL = "gemma3:1b"
@@ -165,6 +166,7 @@ def parse_results(raw_rows):
         except (json.JSONDecodeError, KeyError) as err:
             logging.warning("Could not parse row: %s (%s)", row, err)
     return triples
+
 def run_sbs_query(graph_id, query, host, port):
     """Run SBS query and return JSON rows."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -194,8 +196,47 @@ def run_sbs_query(graph_id, query, host, port):
         print(results)
         return results
 
+def run_graphrag_query(graph_id, query, host, port):
+    """Run GraphRAG query and return JSON rows."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect((host, port))
+        logging.info("Connected to JasmineGraph at %s:%d for GraphRAG", host, port)
+
+        # Enter graphrag command
+        sock.sendall(b"graphrag" + LINE_END)
+        recv_until(sock, b"\n")
+
+        # Send graph ID
+        sock.sendall(graph_id.encode("utf-8") + LINE_END)
+        recv_until(sock, b"\n")
+
+        # Send graphrag natural-language query
+        print("Input natural language query", query)
+        sock.sendall(query.encode("utf-8") + LINE_END)
+
+        print("LLM runner hostname:port:", LLM_RUNNERS_SINGLE_CALL)
+        sock.sendall(LLM_RUNNERS_SINGLE_CALL.encode("utf-8") + LINE_END)
+
+        print("LLM inference engine? ollama/vllm?", LLM_INFERENCE_ENGINE)
+        sock.sendall(LLM_INFERENCE_ENGINE.encode("utf-8") + LINE_END)
+
+        print("What is the LLM you want to use?:", LLM_MODEL)
+        sock.sendall(LLM_MODEL.encode("utf-8") + LINE_END)
+
+        results = []
+        while True:
+            line = recv_until(sock, b"\n").strip()
+            if not line or "done" in line:
+                break
+            results.append(line)
+
+        sock.sendall(b"exit" + LINE_END)
+        print(results)
+        return results
+
 def test_kg(text_folder, upload_file_script, host, port):
     """Upload files, construct KGs, query them, and store triples."""
+    logging.info("test")
     query = "MATCH (n)-[r]-(m) RETURN n,r,m"
     all_txt_files = []
 
@@ -229,8 +270,12 @@ def test_kg(text_folder, upload_file_script, host, port):
 
         sbs_raw = run_sbs_query(str(graph_id),
                                 "At what frequency does radio city broadcast?", host, port)
-        print(sbs_raw)
+        logging.info(sbs_raw)
 
+        graphrag_reponse = run_graphrag_query(str(graph_id),
+                                "When was Radio City started?", host, port)
+
+        logging.info(graphrag_reponse)
 
     return graph_ids
 
