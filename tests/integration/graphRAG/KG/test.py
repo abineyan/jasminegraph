@@ -195,7 +195,7 @@ def run_sbs_query(graph_id, query, host, port):
         sock.sendall(b"exit" + LINE_END)
         print(results)
         return results
-    
+
 def run_graphrag_query(graph_id, query, host, port):
     """Run GraphRAG query and return JSON rows."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

@@ -93,7 +93,7 @@ async def generate(request: Request):
             media_type="application/x-ndjson"
         )
 
-    elif prompt.startswith("you are a semantic beam search planner"):
+    if prompt.startswith("you are a semantic beam search planner"):
         response_content = {
             "model": model,
             "response": 
@@ -116,7 +116,7 @@ async def generate(request: Request):
             "response": "Radio City was started on 3 July 2001.",
             "done": True
         }
-        
+       
     else:
         response_content = {
             "model": model,
