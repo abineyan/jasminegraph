@@ -87,25 +87,13 @@ async def generate(request: Request):
     prompt = data.get("prompt", "")
     prompt = prompt.lower()
 
-    if prompt.startswith("you must extract") and "rdf" in prompt:
-        response_content = {
-            "model": model,
-            "response": [
-                ["Alice","knows","Bob","Person","Person"],
-                ["Bob","works_at","AcmeCorp","Person","Organization"],
-                ["AcmeCorp","located_in","London","Organization","Location"]
-            ],
-            "done": True
-        }
+    if prompt.startswith("you must extract") and "rdf" in prompt and stream:
+        return StreamingResponse(
+            streamer(model),
+            media_type="application/x-ndjson"
+        )
 
     elif prompt.startswith("you are a semantic beam search planner"):
-        response_content = {
-            "model": model,
-            "response": ["Plan: Retrieve relevant documents, rank by relevance, execute action."],
-            "done": True
-        }
-
-    elif prompt.startswith("you are an intelligent question-answering system"):
         response_content = {
             "model": model,
             "response": 
@@ -121,6 +109,13 @@ async def generate(request: Request):
             },
             "done": True
         }
+
+    elif prompt.startswith("you are an intelligent question-answering system"):
+        response_content = {
+            "model": model,
+            "response": ["Plan: Retrieve relevant documents, rank by relevance, execute action."],
+            "done": True
+        }
     else:
         response_content = {
             "model": model,
@@ -130,11 +125,6 @@ async def generate(request: Request):
 
     if not stream:
         return JSONResponse(content=response_content)
-
-    return StreamingResponse(
-        streamer(model),
-        media_type="application/x-ndjson"
-    )
 
 
 def fake_embedding(text, dim=768):
