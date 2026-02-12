@@ -121,6 +121,8 @@ set(HEADERS globals.h
         src/rag/agent/PlanDecoder.h
         src/rag/agent/Responder.h
         src/rag/util/LLMUtils.h
+        src/rag/agent/GraphContext.h
+        src/rag/agent/GraphContextBuilder.h
 
 
 )
@@ -235,6 +237,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/rag/agent/PlanDecoder.cpp
         src/rag/agent/Responder.cpp
         src/rag/util/LLMUtils.cpp
+        src/rag/agent/GraphContextBuilder.cpp
 
 
 
