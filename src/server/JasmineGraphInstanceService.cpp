@@ -5472,8 +5472,30 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
     agentRequestCtx.llmModel = llmModel;
     agentRequestCtx.graphId = graphId;
 
+    std::vector<std::tuple<std::string, int, int>> workers;
+    
+    std::stringstream ss(workerListStr);
+    std::string workerInfo;
+
+    while (std::getline(ss, workerInfo, ',')) {
+        std::stringstream ws(workerInfo);
+        std::string host, portStr, dataPortStr;
+        std::getline(ws, host, ':');
+        std::getline(ws, portStr, ':');
+        std::getline(ws, dataPortStr, ':');
+
+        workers.emplace_back(
+            std::move(host),
+            std::stoi(portStr),
+            std::stoi(dataPortStr)
+        );
+    }
+    
+
+    const int numberOfPartitions = workers.size();
+
     std::string planStr = AgentProtocol::getPlan(agentRequestCtx);
-    instance_logger.info("Executing Agent Plan" + planStr);
+    instance_logger.info("Executing Agent Plan " + planStr);
 
     json jsonPlan = json::parse(planStr);
     DecodedPlan decodedPlan = PlanDecoder::decode(jsonPlan);
@@ -5485,23 +5507,6 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
 
         for (const auto& obj : decodedPlan.sbsPlan->objectives) {
             instance_logger.info("[GraphRAG][SBS] Executing objective: " + obj.id + " -> " + obj.query);
-
-            std::vector<std::tuple<std::string, int, int>> workers;
-            std::stringstream ss(workerListStr);
-            std::string workerInfo;
-
-            while (std::getline(ss, workerInfo, ',')) {
-                std::stringstream ws(workerInfo);
-                std::string host, portStr, dataPortStr;
-
-                std::getline(ws, host, ':');
-                std::getline(ws, portStr, ':');
-                std::getline(ws, dataPortStr, ':');
-
-                workers.emplace_back(host, std::stoi(portStr), std::stoi(dataPortStr));
-            }
-
-            int numberOfPartitions = workers.size();
 
             // ---- Shared buffers ----
             std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
@@ -5545,7 +5550,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
                         }
 
                         instance_logger.debug("[GraphRAG][SBS][Reader-" + std::to_string(i) + "] Data received");
-
+                     
                         json parsed = json::parse(data);
                         std::lock_guard<std::mutex> lock(resultsMutex);
                         results.push_back(parsed);
@@ -5564,7 +5569,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             std::sort(results.begin(), results.end(),
                       [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
-            int k = 10;
+            int k = 20;
             if (results.size() > static_cast<size_t>(k)) {
                 results.resize(k);
             }
