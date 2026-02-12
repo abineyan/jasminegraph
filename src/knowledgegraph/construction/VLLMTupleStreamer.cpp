@@ -281,7 +281,7 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
       if (res == CURLE_WRITE_ERROR && !ctx.retryChunk) {
           vllm_tuple_streamer_logger.warn(
               "Stream aborted by callback due to invalid tuple. Retrying immediately.");
-          int waitTime = baseDelaySeconds * attempt;
+          int waitTime = attempt;
           vllm_tuple_streamer_logger.info("Retrying in " +
                                           std::to_string(waitTime) + " seconds...");
           std::this_thread::sleep_for(std::chrono::seconds(waitTime));
