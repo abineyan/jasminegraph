@@ -61,7 +61,7 @@ json Responder::generateResponse(const std::string& query, const json& execution
                          std::string("\n\nRetrieved Data:\n") + executionResult.dump(2) +
                          std::string("\n\nFinal Answer:");
 
-    responder_logger.debug("Responder Prompt: " + prompt);
+    responder_logger.info("Responder Prompt: " + prompt);
     const int maxRetries = 3;
     const int baseDelaySeconds = 2;
     int attempt = 0;
