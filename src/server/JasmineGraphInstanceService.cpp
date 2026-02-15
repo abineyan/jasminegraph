@@ -5371,6 +5371,8 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
     json jsonPlan = json::parse(planStr);
     DecodedPlan decodedPlan = PlanDecoder::decode(jsonPlan);
 
+    std::vector<json> objectiveTraces;
+
     // ---- Execute SBS objectives ----
     if (decodedPlan.sbsPlan) {
         std::vector<json> globalResults;
@@ -5381,6 +5383,12 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
 
         for (const auto& obj : decodedPlan.sbsPlan->objectives) {
             instance_logger.info("[GraphRAG][SBS] Executing objective: " + obj.id + " -> " + obj.query);
+
+            json mainTrace = {{"id", obj.id},
+                              {"query", obj.query},
+                              {"search_type", obj.searchType.empty() ? "sbs" : obj.searchType}, 
+                              {"llm_reasoning", nullptr},
+                              {"retrieved_paths", json::array()}};
 
             std::vector<std::tuple<std::string, int, int>> workers;
             std::stringstream ss(workerListStr);
@@ -5464,13 +5472,19 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             if (results.size() > static_cast<size_t>(k)) {
                 results.resize(k);
             }
-            instance_logger.info("[GraphRAG][SBS] ID" + obj.id + " Top-" + std::to_string(results.size()) + " results selected");
-
+            instance_logger.info("[GraphRAG][SBS] ID" + obj.id + " Top-" + std::to_string(results.size()) +
+                                 " results selected");
+            
+            mainTrace["retrieved_paths"] = results;
+            objectiveTraces.push_back(mainTrace);
+            
             std::lock_guard<std::mutex> lock(globalResultsMutex);
             globalResults.insert(globalResults.end(), results.begin(), results.end());
 
             instance_logger.info("[GraphRAG][SBS] Objective " + obj.id + " completed");
         }
+
+        instance_logger.info("[GraphRAG] Objective traces JSON:\n" + json(objectiveTraces).dump(2));
 
         instance_logger.info("[GraphRAG] Aggregating results from all objectives");
 
