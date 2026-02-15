@@ -19,7 +19,7 @@ limitations under the License.
 #include <vector>
 class FaissIndex {
  public:
-  ~FaissIndex();
+  // ~FaissIndex();
   static FaissIndex* getInstance(int embeddingDim, const std::string& filepath);
 
   // ~FaissIndex();
@@ -48,6 +48,7 @@ class FaissIndex {
   int dim;
   faiss::IndexFlatL2* index;
   std::mutex mtx;
+  std::mutex fileMtx;
   std::string filePath;
   std::unordered_map<std::string, faiss::idx_t>
       nodeIdToEmbeddingIdMap;  // Maps node IDs to FAISS IDs

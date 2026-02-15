@@ -26,7 +26,7 @@ struct StreamContext {
   SharedBuffer* buffer;       // shared buffer to push tuples
   std::string current_tuple;  // accumulate partial tuple text
   bool isSuccess;             // track success/failure
-    bool retryChunk;
+    bool retryChunk  = false;
     std::string retryReason;
   std::stack<char> braceStack;
   int braceDepth = 0;

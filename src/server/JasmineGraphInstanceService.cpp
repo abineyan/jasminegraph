@@ -3792,6 +3792,7 @@ static void streaming_tuple_extraction(
         } else {
           tupleData = *optTupleData;
         }
+          instance_logger.debug("3795"+ tupleData);
 
         int tuple_length = tupleData.length();
         int converted_number = htonl(tuple_length);
@@ -5855,17 +5856,17 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_START_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_START_ACK);
 
     char data[DATA_BUFFER_SIZE];
     string isEmbedGraph = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
-    instance_logger.debug("Received isEmbedGraph : " + isEmbedGraph);
+    instance_logger.info("Received isEmbedGraph : " + isEmbedGraph);
 
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_IS_EMBED_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for isEmbedGraph ");
+    instance_logger.info("Acked for isEmbedGraph ");
 
     string fileName = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
     instance_logger.debug("Received File name: " + fileName);
@@ -5874,17 +5875,17 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for file name");
+    instance_logger.info("Acked for file name");
 
     string size = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
-    instance_logger.debug("Received file size in bytes: " + size);
+    instance_logger.info("Received file size in bytes: " + size);
 
     int fileSize = stoi(size);
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_FILE_SIZE_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for file size");
+    instance_logger.info("Acked for file size");
 
     string line;
     string fullFilePath =
@@ -5917,13 +5918,13 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         close(connFd);
         return;
     }
-    instance_logger.debug("Received : " + line);
+    instance_logger.info("Received : " + line);
 
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::FILE_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::FILE_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::FILE_ACK);
 
     while (!Utils::fileExists(fullFilePath)) {
         line = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
@@ -5938,7 +5939,7 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
             *loop_exit_p = true;
             return;
         }
-        instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_WAIT);
+        instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_WAIT);
     }
 
     line = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
@@ -5948,12 +5949,12 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         close(connFd);
         return;
     }
-    instance_logger.debug("Received : " + line);
+    instance_logger.info("Received : " + line);
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK);
 
         bool done = false;
         std::thread procThread([&]() {

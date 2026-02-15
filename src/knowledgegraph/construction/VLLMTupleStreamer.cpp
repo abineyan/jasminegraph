@@ -57,9 +57,9 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
         ctx->buffer->add(ctx->current_tuple);
         ctx->current_tuple.clear();
       }
-        if (!ctx->retryChunk) {
+        // if (!ctx->retryChunk) {
             ctx->buffer->add("-1");  // Signal end
-        }
+        // }
       break;
     }
 
@@ -188,6 +188,7 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
 void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
                                     const std::string& chunkText,
                                     SharedBuffer& tupleBuffer) {
+
   const int maxRetries = std::stoi(Utils::getJasmineGraphProperty(
       "org.jasminegraph.kg.tuplestreamer.retry.max"));
   const int baseDelaySeconds = std::stoi(Utils::getJasmineGraphProperty(
@@ -228,7 +229,7 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
-
+      vllm_tuple_streamer_logger.debug("2232");
       std::string userPrompt;
 
       if (!ctx.retryChunk) {
@@ -238,7 +239,9 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
 
                                        "\nNow process the following text:\n" +
                                        chunkText + "\n\nArray:";
+          vllm_tuple_streamer_logger.debug("242");
       } else {
+          vllm_tuple_streamer_logger.debug("244");
           // Retry attempt (corrective)
           userPrompt =
               Prompts::KNOWLEDGE_EXTRACTION +
@@ -259,21 +262,37 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
 
     jsonRequest["stream"] = true;
     jsonRequest["max_tokens"] = 10000;
+      std::string postFields;
+      vllm_tuple_streamer_logger.debug("265");
+      // vllm_tuple_streamer_logger.debug(jsonRequest);
+      vllm_tuple_streamer_logger.debug(chunkText);
+      try {
+          postFields = jsonRequest.dump();
+      } catch (exception& e) {
+          vllm_tuple_streamer_logger.warn("JsonRequest parsing failed in vllm");
+          vllm_tuple_streamer_logger.error( e.what());
+      }
+      vllm_tuple_streamer_logger.debug("267");
 
-    std::string postFields = jsonRequest.dump();
     // vllm_tuple_streamer_logger.info("Post fields: " + postFields);
     ctx.current_tuple = "";
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, postFields.size());
+      vllm_tuple_streamer_logger.debug("273");
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+      vllm_tuple_streamer_logger.debug("278");
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, StreamCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+      vllm_tuple_streamer_logger.debug("282");
+
+
 
     res = curl_easy_perform(curl);
+      vllm_tuple_streamer_logger.debug("285");
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
@@ -281,7 +300,7 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
       if (res == CURLE_WRITE_ERROR && !ctx.retryChunk) {
           vllm_tuple_streamer_logger.warn(
               "Stream aborted by callback due to invalid tuple. Retrying immediately.");
-          int waitTime = baseDelaySeconds * attempt;
+          int waitTime = attempt;
           vllm_tuple_streamer_logger.info("Retrying in " +
                                           std::to_string(waitTime) + " seconds...");
           std::this_thread::sleep_for(std::chrono::seconds(waitTime));
@@ -293,6 +312,7 @@ void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
                                       std::to_string(waitTime) + " seconds...");
       std::this_thread::sleep_for(std::chrono::seconds(waitTime));
     }
+      vllm_tuple_streamer_logger.debug("305");
 
     attempt++;
   } while ((res != CURLE_OK && attempt < maxRetries) || !ctx.isSuccess);
