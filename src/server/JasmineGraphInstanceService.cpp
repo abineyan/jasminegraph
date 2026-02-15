@@ -5386,7 +5386,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
 
             json mainTrace = {{"id", obj.id},
                               {"query", obj.query},
-                              {"search_type", obj.searchType.empty() ? "sbs" : obj.searchType}, 
+                              {"search_type", obj.searchType.empty() ? "sbs" : obj.searchType},
                               {"llm_reasoning", nullptr},
                               {"retrieved_paths", json::array()}};
 
@@ -5474,17 +5474,27 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             }
             instance_logger.info("[GraphRAG][SBS] ID" + obj.id + " Top-" + std::to_string(results.size()) +
                                  " results selected");
-            
+
             mainTrace["retrieved_paths"] = results;
             objectiveTraces.push_back(mainTrace);
-            
+
             std::lock_guard<std::mutex> lock(globalResultsMutex);
             globalResults.insert(globalResults.end(), results.begin(), results.end());
 
             instance_logger.info("[GraphRAG][SBS] Objective " + obj.id + " completed");
         }
 
-        instance_logger.info("[GraphRAG] Objective traces JSON:\n" + json(objectiveTraces).dump(2));
+        instance_logger.info("[GraphRAG] Sending objective traces");
+
+        std::string tracesPayload =
+            json{{"type", "objective_traces"}, {"data", objectiveTraces}}.dump() + Conts::CARRIAGE_RETURN_NEW_LINE;
+
+        instance_logger.debug("[GraphRAG] Objective traces payload: " + tracesPayload);
+
+        if (write(connFd, tracesPayload.c_str(), tracesPayload.size()) < 0) {
+            instance_logger.error("[GraphRAG] Failed to send objective traces");
+            *loop_exit_p = true;
+        }
 
         instance_logger.info("[GraphRAG] Aggregating results from all objectives");
 
