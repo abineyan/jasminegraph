@@ -165,6 +165,25 @@ void AgentPlanExecutor::execute() {
                     break;
                 }
 
+                if (payload.contains("type") && payload["type"] == "objective_traces") {
+                    agent_executor_logger.info("Objective traces received");
+
+                    std::string tracesStr = payload["data"].dump(2);
+
+                    // Send to frontend
+                    ssize_t n = write(connFd, tracesStr.c_str(), tracesStr.size());
+                    write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+
+                    if (n < 0) {
+                        agent_executor_logger.error("Error writing objective traces to frontend socket");
+                        *loop_exit = true;
+                        close(sockfd);
+                        return;
+                    }
+
+                    continue;
+                }
+
                 if (payload.contains("type") && payload["type"] == "answer_chunk") {
                     std::string dataStr = payload["data"];
                     nlohmann::json innerJson = nlohmann::json::parse(dataStr);
