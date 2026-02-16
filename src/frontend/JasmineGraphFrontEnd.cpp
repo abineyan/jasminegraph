@@ -90,9 +90,6 @@ static void cypherCommand(std::string masterIP, int connFd, vector<DataPublisher
 static void semanticBeamSearch(std::string masterIP, int connFd, vector<DataPublisher*>& workerClients,
                                int numberOfPartitions, bool* loop_exit, SQLiteDBInterface* sqlite,
                                PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler);
-static void agent_plan_command(std::string masterIP, int connFd, vector<DataPublisher*>& workerClients,
-                               int numberOfPartitions, bool* loop_exit, SQLiteDBInterface* sqlite,
-                               PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler);
 static void add_rdf_command(std::string masterIP, int connFd, SQLiteDBInterface* sqlite, bool* loop_exit_p);
 static void add_graph_command(std::string masterIP, int connFd, SQLiteDBInterface* sqlite, bool* loop_exit_p);
 static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInterface* sqlite, bool* loop_exit_p);
@@ -214,7 +211,7 @@ void* frontendservicesesion(void* dummyPt) {
         } else if (line.compare(AGENT_PLAN) == 0) {
             workerClients = getWorkerClients(sqlite);
             workerClientsInitialized = true;
-            agent_plan_command(masterIP, connFd, workerClients, numberOfPartitions, &loop_exit, sqlite, perfSqlite,
+            JasmineGraphFrontEnd::agent_plan_command(masterIP, connFd, numberOfPartitions, &loop_exit, sqlite, perfSqlite,
                                jobScheduler);
         } else if (line.compare(SHTDN) == 0) {
             JasmineGraphServer::shutdown_workers();
@@ -732,7 +729,7 @@ static void semanticBeamSearch(std::string masterIP, int connFd, vector<DataPubl
     }
 }
 
-static void agent_plan_command(std::string masterIP, int connFd, vector<DataPublisher*>& workerClients,
+void  JasmineGraphFrontEnd::agent_plan_command(std::string masterIP, int connFd,
                                int numberOfPartitions, bool* loop_exit, SQLiteDBInterface* sqlite,
                                PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler) {
     string graphIdPrompt = "Graph ID:";
@@ -802,9 +799,7 @@ static void agent_plan_command(std::string masterIP, int connFd, vector<DataPubl
     frontend_logger.debug("LLM model: " + llmModel);
 
     // ---------------Verify Model------------
-    vector<std::string> llmServers = Utils::getUniqueLLMRunners(llmRunner);
 
-    for (auto llmServer : llmServers) {
         std::string url;
         bool modelFound = false;
         std::string endpointPath;
@@ -821,7 +816,7 @@ static void agent_plan_command(std::string masterIP, int connFd, vector<DataPubl
             return;
         }
 
-        url = Utils::normalizeURL(llmServer, endpointPath);
+        url = Utils::normalizeURL(llmRunner, endpointPath);
         frontend_logger.debug("Final LLM endpoint: " + url);
 
         CURL* curl = curl_easy_init();
@@ -839,7 +834,7 @@ static void agent_plan_command(std::string masterIP, int connFd, vector<DataPubl
             curl_easy_cleanup(curl);
 
             if (res != CURLE_OK) {
-                frontend_logger.error("Failed to reach " + inferenceEngine + " server at " + llmServer);
+                frontend_logger.error("Failed to reach " + inferenceEngine + " server at " + llmRunner);
                 std::string msg = "Could not connect to " + inferenceEngine + " server.";
                 write(connFd, msg.c_str(), msg.length());
                 write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
@@ -872,7 +867,6 @@ static void agent_plan_command(std::string masterIP, int connFd, vector<DataPubl
                 frontend_logger.info("Verified model '" + llmModel + "' exists on " + inferenceEngine + " server.");
             }
         }
-    }
 
     auto begin = chrono::high_resolution_clock::now();
 

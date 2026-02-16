@@ -49,16 +49,16 @@ FaissIndex::FaissIndex(int embeddingDim, const std::string& filepath)
   load(filepath);
 }
 
-FaissIndex::~FaissIndex() {
-  try {
-    faiss_index_logger.info("saving FAISS index from destructor");
-    save(filePath);
-  } catch (const std::exception& e) {
-    faiss_index_logger.error("[FaissIndex] Failed to auto-save index: " +
-                             std::string(e.what()));
-  }
-  delete index;
-}
+// FaissIndex::~FaissIndex() {
+//   try {
+//     faiss_index_logger.info("saving FAISS index from destructor");
+//     save(filePath);
+//   } catch (const std::exception& e) {
+//     faiss_index_logger.error("[FaissIndex] Failed to auto-save index: " +
+//                              std::string(e.what()));
+//   }
+//   delete index;
+// }
 
 faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
                              std::string nodeId) {
@@ -66,7 +66,7 @@ faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
     throw std::runtime_error("Embedding dimension mismatch!");
   }
     try {
-        std::unique_lock<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
 
         faiss::idx_t new_id = index->ntotal;
         faiss_index_logger.debug("[FaissIndex] Adding new embedding with nodeId: " +
@@ -79,18 +79,18 @@ faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
         nodeIdToEmbeddingIdMap[nodeId] = new_id;
         embeddingIdToNodeIdMap[new_id] = nodeId;
 
-        // if (index->ntotal % 1000 == 0) {
-        //     lock.unlock();
-        //     faiss_index_logger.info("saving faiss index periodically");
-        //     save(filePath);
-        //     faiss_index_logger.info("saved faiss index periodically");
-        //
-        // }
-        lock.unlock();
+        if (index->ntotal % 1000 == 0) {
+            // lock.unlock();
+            faiss_index_logger.info("saving faiss index periodically");
+            save(filePath);
+            faiss_index_logger.info("saved faiss index periodically");
+
+        }
+
         return new_id;
     } catch (const std::exception& e) {
-       // faiss_index_logger.error(std::string("Failed to reconstruct embedding for ID ") + nodeId + ": " +
-       //     e.what());
+       faiss_index_logger.error(std::string("Failed to reconstruct embedding for ID ") + nodeId + ": " +
+           e.what());
         throw std::runtime_error("Failed to reconstruct embedding for ID " + nodeId);
     }
 }
@@ -113,7 +113,7 @@ std::vector<std::pair<faiss::idx_t, float>> FaissIndex::search(
 }
 
 void FaissIndex::save(const std::string& filepath) {
-  std::lock_guard<std::mutex> lock(mtx);
+  std::lock_guard<std::mutex> lock(fileMtx);
 
   // Save FAISS index
   faiss::write_index(index, filepath.c_str());

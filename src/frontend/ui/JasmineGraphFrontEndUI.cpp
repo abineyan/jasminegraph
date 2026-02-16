@@ -187,6 +187,9 @@ void *uifrontendservicesesion(void *dummyPt) {
                 sqlite, &loop_exit);
         } else if (line.compare(STOP_CONSTRUCT_KG) == 0) {
             JasmineGraphFrontEnd::stop_graph_streaming(connFd, sqlite, &loop_exit);
+        }else if (line.compare(AGENT_PLAN) == 0) {
+            JasmineGraphFrontEnd::agent_plan_command(masterIP, connFd, numberOfPartitions, &loop_exit, sqlite,
+                perfSqlite, jobScheduler );
         } else if (token.compare("UPBYTES") == 0) {
            send_uploaded_bytes(connFd, sqlite, &loop_exit, line);
         } else {
@@ -534,7 +537,7 @@ static void send_uploaded_bytes(int connFd, SQLiteDBInterface *sqlite, bool *loo
         auto rate = JasmineGraphFrontEnd::kgConstructionRates[id];
 
         double bytesPerSecond = rate ? rate->bytesPerSecond : 0.0;
-        double triplesPerSecond = rate ? rate->triplesPerSecond : 0.0;
+        double triplesPerSecond = rate ? std::round(rate->triplesPerSecond) : 0.0;
         if (percent < 100.0) {
             msg += "|" + graphID + "|" + std::to_string(uploadedBytes) + "|" + std::to_string(fileSizeBytes) + "|" +
                    std::to_string(percent) + "|" + std::to_string(bytesPerSecond) + "|" +

@@ -3618,148 +3618,182 @@ static void streaming_kg_construction_local(int connFd, bool* loop_exit_p) {
 }
 
 static void streaming_tuple_extraction(
-    int connFd, int serverPort, std::map<std::string, JasmineGraphIncrementalLocalStore*>& incrementalLocalStoreMap,
-    bool* loop_exit_p) {
-    char data[DATA_BUFFER_SIZE];
+    int connFd, int serverPort,
+    std::map<std::string, JasmineGraphIncrementalLocalStore *>
+        &incrementalLocalStoreMap,
+    bool *loop_exit_p) {
+  char data[DATA_BUFFER_SIZE];
 
-    instance_logger.info("in streaming_tuple_extraction");
-    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
-    // 2. Expect graphID
-    std::string graphID = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
-    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+  instance_logger.info("in streaming_tuple_extraction");
+  Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+  // 2. Expect graphID
+  std::string graphID =
+      Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
+  Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
-    // 3. Expect LLM runner hostname and port
-    std::string llmHost = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
-    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+  // 3. Expect LLM runner hostname and port
+  std::string llmHost =
+      Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
+  Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
-    std::string llmInferenceEngine = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
-    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+  std::string llmInferenceEngine =
+      Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
+  Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
-    std::string llm = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
-    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
-    instance_logger.info("LLM Host: " + llmHost);
-    instance_logger.info("LLM : " + llm);
-    std::unique_ptr<TupleStreamer> streamer;
+  std::string llm =
+      Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
+  Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+  instance_logger.info("LLM Host: " + llmHost);
+  instance_logger.info("LLM : " + llm);
+  std::unique_ptr<TupleStreamer> streamer;
 
-    if (llmInferenceEngine == "ollama") {
-        streamer = std::make_unique<OllamaTupleStreamer>(llm, llmHost);
-    } else {
-        streamer = std::make_unique<VLLMTupleStreamer>(llm, llmHost);
+  if (llmInferenceEngine == "ollama") {
+    streamer = std::make_unique<OllamaTupleStreamer>(llm, llmHost);
+  } else {
+    streamer = std::make_unique<VLLMTupleStreamer>(llm, llmHost);
+  }
+
+  SharedBuffer tupleBuffer(100);
+  std::condition_variable dataBufferCV;
+  std::mutex dataBufferMutex;
+  while (true) {
+    std::string command =
+        Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
+
+    if (command == JasmineGraphInstanceProtocol::CHUNK_STREAM_END) {
+      Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
+      break;
     }
+    instance_logger.info("Received command: " + command);
+    if (command != JasmineGraphInstanceProtocol::QUERY_DATA_START) {
+      break;
+    }
+    Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
-    SharedBuffer tupleBuffer(100);
-    std::condition_variable dataBufferCV;
-    std::mutex dataBufferMutex;
-    while (true) {
-        std::string command = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
+    int content_length;
+    recv(connFd, &content_length, sizeof(int), 0);
+    content_length = ntohl(content_length);
+    Utils::send_str_wrapper(
+        connFd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
+    instance_logger.debug("Received content length: " +
+                         std::to_string(content_length));
+      std::string chunk(content_length, 0);
+      size_t received = 0;
+      while (received < content_length) {
+          ssize_t ret = recv(connFd, &chunk[received], content_length - received, 0);
+          if (ret <= 0) {
+              instance_logger.error("Error receiving request string");
+              break;
+          }
+          received += ret;
+      }
 
-        if (command == JasmineGraphInstanceProtocol::CHUNK_STREAM_END) {
-            Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
-            break;
-        }
-        instance_logger.info("Received command: " + command);
-        if (command != JasmineGraphInstanceProtocol::QUERY_DATA_START) {
-            break;
-        }
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
-        int content_length;
-        recv(connFd, &content_length, sizeof(int), 0);
-        content_length = ntohl(content_length);
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
-        instance_logger.debug("Received content length: " + std::to_string(content_length));
-        std::string chunk(content_length, 0);
-        size_t received = 0;
-        while (received < content_length) {
-            ssize_t ret = recv(connFd, &chunk[received], content_length - received, 0);
-            if (ret <= 0) {
-                instance_logger.error("Error receiving request string");
-                break;
-            }
-            received += ret;
-        }
+    Utils::send_str_wrapper(connFd,
+                            JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
+      ScopedTracer chunkTrace(
+      "chunk_processing_with_tuples",
+      {
+          {"chunk_content_length", std::to_string(content_length)},
+          {"chunk_text", chunk},
+          {"worker.id", "worker_" + std::to_string(serverPort)},
+          {"worker.port", std::to_string(serverPort)},
+          {"llm.server.endpoint", llmHost},
+          {"graph.id", graphID},
+          {"operation.type", "streaming_tuple_extraction"}
+      });
 
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
-        ScopedTracer chunkTrace("chunk_processing_with_tuples",
-                                {{"chunk_content_length", std::to_string(content_length)},
-                                 {"chunk_text", chunk},
-                                 {"worker.id", "worker_" + std::to_string(serverPort)},
-                                 {"worker.port", std::to_string(serverPort)},
-                                 {"llm.server.endpoint", llmHost},
-                                 {"graph.id", graphID},
-                                 {"operation.type", "streaming_tuple_extraction"}});
-
-        recv(connFd, &content_length, sizeof(int), 0);
-        content_length = ntohl(content_length);
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
-        instance_logger.debug("Received content length: " + std::to_string(content_length));
-        std::string traceContext(content_length, 0);
-        recv(connFd, &traceContext[0], content_length, 0);
+      recv(connFd, &content_length, sizeof(int), 0);
+      content_length = ntohl(content_length);
+      Utils::send_str_wrapper(
+          connFd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
+      instance_logger.debug("Received content length: " +
+                           std::to_string(content_length));
+      std::string traceContext(content_length, 0);
+      recv(connFd, &traceContext[0], content_length, 0);
         instance_logger.debug("traceContext: " + traceContext);
-        OpenTelemetryUtil::receiveAndSetTraceContext(traceContext, "Streaming tuple extraction");
+      OpenTelemetryUtil::receiveAndSetTraceContext(traceContext, "Streaming tuple extraction");
 
-        // Add worker identification attributes to distinguish workers in traces
-        OpenTelemetryUtil::addSpanAttribute("worker.id", "worker_" + std::to_string(serverPort));
-        OpenTelemetryUtil::addSpanAttribute("worker.port", std::to_string(serverPort));
-        OpenTelemetryUtil::addSpanAttribute("llm.server.endpoint", llmHost);
-        OpenTelemetryUtil::addSpanAttribute("graph.id", graphID);
-        OpenTelemetryUtil::addSpanAttribute("operation.type", "streaming_tuple_extraction");
+      // Add worker identification attributes to distinguish workers in traces
+      OpenTelemetryUtil::addSpanAttribute("worker.id", "worker_" + std::to_string(serverPort));
+      OpenTelemetryUtil::addSpanAttribute("worker.port", std::to_string(serverPort));
+      OpenTelemetryUtil::addSpanAttribute("llm.server.endpoint", llmHost);
+      OpenTelemetryUtil::addSpanAttribute("graph.id", graphID);
+      OpenTelemetryUtil::addSpanAttribute("operation.type", "streaming_tuple_extraction");
 
-        // Consumer thread that prints tuples from buffer
-        std::thread consumer([&]() {
-            Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::QUERY_DATA_START);
-            if (!Utils::expect_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
-                instance_logger.error("Error in receving query-start-ack");
-                *loop_exit_p = true;
-                close(connFd);
-            };
-            int idleTimeoutSec = 300;  // e.g., break if no tuple for 30s
-            int tuple_id = 0;
-            vector<string> trace_tuples;
-            while (true) {
-                auto optTupleData = tupleBuffer.getWithTimeout(idleTimeoutSec);
-                std::string tupleData;
-                if (!optTupleData.has_value()) {
-                    instance_logger.error("No tuple received for " + std::to_string(idleTimeoutSec) + "s. Exiting...");
-                    tupleData = "-1";  // End signal
-                } else {
-                    tupleData = *optTupleData;
-                }
 
-                int tuple_length = tupleData.length();
-                int converted_number = htonl(tuple_length);
+    // Consumer thread that prints tuples from buffer
+    std::thread consumer([&]() {
+      Utils::send_str_wrapper(connFd,
+                              JasmineGraphInstanceProtocol::QUERY_DATA_START);
+      if (!Utils::expect_str_wrapper(connFd,
+                                     JasmineGraphInstanceProtocol::OK)) {
+        instance_logger.error("Error in receving query-start-ack");
+        *loop_exit_p = true;
+        close(connFd);
+      };
+      int idleTimeoutSec = 300;   // e.g., break if no tuple for 30s
+        int tuple_id = 0;
+        vector<string> trace_tuples;
+      while (true) {
+        auto optTupleData = tupleBuffer.getWithTimeout(idleTimeoutSec);
+        std::string tupleData;
+        if (!optTupleData.has_value()) {
+          instance_logger.error("No tuple received for " +
+                                std::to_string(idleTimeoutSec) +
+                                "s. Exiting...");
+          tupleData = "-1";  // End signal
+        } else {
+          tupleData = *optTupleData;
+        }
+          instance_logger.debug("3795"+ tupleData);
 
-                Utils::sendIntExpectResponse(connFd, data,
-                                             JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
-                                             converted_number, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
-                ScopedTracer tupleSpan("generated_tuple", {{"tuple_id", to_string(tuple_id)}, {"tuple", tupleData}});
-                trace_tuples.push_back(tupleData);
-                tuple_id++;
-                Utils::send_str_wrapper(connFd, tupleData);
-                char ack1[FED_DATA_LENGTH + 1];
-                string response = Utils::read_str_wrapper(connFd, ack1, FED_DATA_LENGTH);
-                if (response == "stop") {
-                    tupleBuffer.clear();
-                    break;
-                }
-                if (tupleData == "-1") {
-                    string tupleArrayString;
-                    for (const string& tuple : trace_tuples) {
-                        tupleArrayString += tuple;
-                        tupleArrayString += ", \n";
-                    }
-                    chunkTrace.addAttributes({{"tuple_count", std::to_string(tuple_id)}, {"tuples", tupleArrayString}});
-                    instance_logger.info("Received end signal from producer");
-                    // instance_logger.info(chunk);
-                    // instance_logger.info(tupleArrayString);
-                    tupleBuffer.clear();
-                    break;
-                }
+        int tuple_length = tupleData.length();
+        int converted_number = htonl(tuple_length);
+
+        Utils::sendIntExpectResponse(
+                connFd, data,
+                JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK
+                    .length(),
+                converted_number,
+                JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
+        ScopedTracer tupleSpan(
+                            "generated_tuple",
+                            {
+                                {"tuple_id", to_string(tuple_id)},
+                                {"tuple", tupleData}
+                            });
+        trace_tuples.push_back(tupleData);
+        tuple_id++;
+        Utils::send_str_wrapper(connFd, tupleData);
+        char ack1[FED_DATA_LENGTH + 1];
+        string response =
+            Utils::read_str_wrapper(connFd, ack1, FED_DATA_LENGTH);
+        if (response == "stop") {
+          tupleBuffer.clear();
+          break;
+        }
+        if (tupleData == "-1") {
+            string tupleArrayString;
+            for (const string& tuple : trace_tuples) {
+                tupleArrayString += tuple;
+                tupleArrayString += ", \n";
             }
-        });
-        streamer->streamChunk("chunk1", chunk, tupleBuffer);
-        consumer.join();
-    }
+            chunkTrace.addAttributes({
+       {"tuple_count", std::to_string(tuple_id)},
+       {"tuples", tupleArrayString}
+            });
+          instance_logger.info("Received end signal from producer");
+          // instance_logger.info(chunk);
+          // instance_logger.info(tupleArrayString);
+          tupleBuffer.clear();
+          break;
+        }
+      }
+    });
+    streamer->streamChunk("chunk1", chunk, tupleBuffer);
+    consumer.join();
+  }
 }
 
 static void send_centralstore_to_aggregator_command(int connFd, bool* loop_exit_p) {
@@ -5795,17 +5829,17 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_START_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_START_ACK);
 
     char data[DATA_BUFFER_SIZE];
     string isEmbedGraph = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
-    instance_logger.debug("Received isEmbedGraph : " + isEmbedGraph);
+    instance_logger.info("Received isEmbedGraph : " + isEmbedGraph);
 
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_IS_EMBED_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for isEmbedGraph ");
+    instance_logger.info("Acked for isEmbedGraph ");
 
     string fileName = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
     instance_logger.debug("Received File name: " + fileName);
@@ -5814,17 +5848,17 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for file name");
+    instance_logger.info("Acked for file name");
 
     string size = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
-    instance_logger.debug("Received file size in bytes: " + size);
+    instance_logger.info("Received file size in bytes: " + size);
 
     int fileSize = stoi(size);
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_FILE_SIZE_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Acked for file size");
+    instance_logger.info("Acked for file size");
 
     string line;
     string fullFilePath =
@@ -5857,13 +5891,13 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         close(connFd);
         return;
     }
-    instance_logger.debug("Received : " + line);
+    instance_logger.info("Received : " + line);
 
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::FILE_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::FILE_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::FILE_ACK);
 
     while (!Utils::fileExists(fullFilePath)) {
         line = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
@@ -5878,7 +5912,7 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
             *loop_exit_p = true;
             return;
         }
-        instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_WAIT);
+        instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_WAIT);
     }
 
     line = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH, false);
@@ -5888,12 +5922,12 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
         close(connFd);
         return;
     }
-    instance_logger.debug("Received : " + line);
+    instance_logger.info("Received : " + line);
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK)) {
         *loop_exit_p = true;
         return;
     }
-    instance_logger.debug("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK);
+    instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::HDFS_STREAM_END_ACK);
 
     bool done = false;
     std::thread procThread([&]() {

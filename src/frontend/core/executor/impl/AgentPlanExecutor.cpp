@@ -188,6 +188,7 @@ void AgentPlanExecutor::execute() {
                     std::string dataStr = payload["data"];
                     nlohmann::json innerJson = nlohmann::json::parse(dataStr);
                     std::string chunkContent = innerJson["answer"];
+                    chunkContent = "ANSWER:" + chunkContent;
 
                     ssize_t n = write(connFd, chunkContent.c_str(), chunkContent.size());
                     write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());

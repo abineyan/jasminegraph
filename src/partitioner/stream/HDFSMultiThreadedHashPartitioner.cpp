@@ -70,7 +70,7 @@ void HDFSMultiThreadedHashPartitioner::addLocalEdge(const std::string &edge, int
         localEdgeArrays[index].push_back(edge);
         if (localEdgeArrays[index].size() >= partitionFileEdgeThreshold) {
             hash_partitioner_logger.debug("Adding local edge, releaseing lock");
-            edgeReady[index] = true;
+            // edgeReady[index] = true;
                    lock.unlock();
             edgeAvailableCV[index].notify_one();
             hash_partitioner_logger.debug("Adding local edge, nofiyying consumer");
@@ -140,12 +140,13 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
             std::unique_lock<std::mutex> lock(localEdgeMutexes[partitionIndex]);
              // Wait until there are edges available or the thread is signaled to terminate
              edgeAvailableCV[partitionIndex].wait(lock, [this, partitionIndex] {
-                 return edgeReady[partitionIndex] || terminateConsumers;
+                 return !localEdgeArrays[partitionIndex].empty()  || terminateConsumers;
              });
 
              hash_partitioner_logger.debug("ADDING edge, bathcing");
              batch.swap(localEdgeArrays[partitionIndex]);
-             edgeReady[partitionIndex] = false;
+             lock.unlock();
+             // edgeReady[partitionIndex] = false;
         }
 
 

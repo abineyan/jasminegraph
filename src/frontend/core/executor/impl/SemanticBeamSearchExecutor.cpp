@@ -115,7 +115,7 @@ void SemanticBeamSearchExecutor::execute() {
     std::sort(results.begin(), results.end(), [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
     // trim to top k
-    int k = 10;
+    int k = 50;
     if ((int)results.size() > k)
         results.resize(k);
 
