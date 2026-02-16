@@ -27,6 +27,7 @@ using json = nlohmann::json;
 Logger planner_logger;
 
 static const std::string SBS_PLANNER_PROMPT = R"(
+
 You are a Semantic Beam Search Planner in an agentic retrieval system.
 
 Your task is to analyze a user query and decide whether it should be handled as:
@@ -35,6 +36,7 @@ Your task is to analyze a user query and decide whether it should be handled as:
 
 Important constraints:
 - Semantic beam search is greedy and local.
+- Complex queries MUST be broken down into simpler, independent retrieval objectives when decomposition is chosen.
 - Decomposition should only be used when it improves recall or reasoning.
 - Do NOT decompose simple, factual, or single-entity queries.
 - Every plan MUST produce one or more objectives with the SAME STRUCTURE.
@@ -45,6 +47,11 @@ Decompose the query ONLY if one or more of the following are true:
 - The query involves multiple entities or domains
 - The query requires comparison, aggregation, or reasoning across steps
 - The query cannot be answered by retrieving a single coherent document
+- The query contains multiple dependent facts that must be resolved separately
+
+When decomposing:
+- Break the complex query into smaller, simple, standalone information needs.
+- Each objective should represent one atomic retrieval goal.
 
 DO NOT:
 - Generate Cypher queries
