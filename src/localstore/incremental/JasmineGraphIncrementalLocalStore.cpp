@@ -160,6 +160,8 @@ void JasmineGraphIncrementalLocalStore::getAndStoreEmbeddings() {
                 }
             }
         }
+        faissNodeStore->save();
+        faissEdgeStore->save();
         incremental_localstore_logger.debug(
             "Embedding thread exiting cleanly for Partition: " +
             std::to_string(gc.partitionID));
