@@ -209,7 +209,8 @@ class Utils {
                                 std::string workerID, SQLiteDBInterface* sqlite);
   static bool sendSbsQueryPlanToWorker(std::string host, int port, std::string masterIP, int graphID, int PartitionId,
                                        std::string query, SharedBuffer& sharedBuffer,
-                                       const std::string& workerListString);
+                                       const std::string& workerListString, int numHops, int beamWidth,
+                                       int initialSeed);
   static bool sendQueryPlanToWorker(const std::string& host, int port, const std::string& masterIP, int graphID,
                                     int PartitionId, const std::string& message, SharedBuffer& sharedBuffer,
                                     const std::string& masterTraceContext = "");

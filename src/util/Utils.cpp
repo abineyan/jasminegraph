@@ -1767,8 +1767,8 @@ bool Utils::sendQueryPlanToWorker(const std::string& host, int port, const std::
 }
 
 bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string masterIP, int graphID, int partitionId,
-                                     std::string query, SharedBuffer& sharedBuffer,
-                                     const std::string& workerListString) {
+                                     std::string query, SharedBuffer& sharedBuffer, const std::string& workerListString,
+                                     int numHops, int beamWidth, int initialSeed) {
     util_logger.debug("Connecting to worker at " + host + ":" + std::to_string(port));
     util_logger.debug("Parameters: host=" + host + ", port=" + std::to_string(port) + ", masterIP=" + masterIP +
                       ", graphID=" + std::to_string(graphID) + ", partitionId=" + std::to_string(partitionId) +
@@ -1923,6 +1923,81 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     util_logger.debug(ack);
 
     util_logger.debug("Received ACK after query ");
+
+    // --- Step 6: Send numHops ---
+    std::string numHopsStr = std::to_string(numHops);
+    length = htonl(numHopsStr.size());
+
+    util_logger.debug("Sending numHops length: " + std::to_string(ntohl(length)));
+    send(sockfd, &length, sizeof(length), 0);
+
+    util_logger.debug("Sending numHops: " + numHopsStr);
+    if (send(sockfd, numHopsStr.c_str(), numHopsStr.size(), 0) <= 0) {
+        util_logger.error("Failed to send numHops");
+        close(sockfd);
+        return false;
+    }
+
+    bzero(ack, ACK_MESSAGE_SIZE);
+
+    util_logger.debug("Waiting for ACK after numHops");
+    if (recv(sockfd, ack, strlen("stream-c-length-ack"), 0) <= 0) {
+        util_logger.error("Failed to receive ACK after numHops");
+        close(sockfd);
+        return false;
+    }
+
+    util_logger.debug("Received ACK after numHops");
+
+    // --- Step 7: Send beamWidth ---
+    std::string beamWidthStr = std::to_string(beamWidth);
+    length = htonl(beamWidthStr.size());
+
+    util_logger.debug("Sending beamWidth length: " + std::to_string(ntohl(length)));
+    send(sockfd, &length, sizeof(length), 0);
+
+    util_logger.debug("Sending beamWidth: " + beamWidthStr);
+    if (send(sockfd, beamWidthStr.c_str(), beamWidthStr.size(), 0) <= 0) {
+        util_logger.error("Failed to send beamWidth");
+        close(sockfd);
+        return false;
+    }
+
+    bzero(ack, ACK_MESSAGE_SIZE);
+
+    util_logger.debug("Waiting for ACK after beamWidth");
+    if (recv(sockfd, ack, strlen("stream-c-length-ack"), 0) <= 0) {
+        util_logger.error("Failed to receive ACK after beamWidth");
+        close(sockfd);
+        return false;
+    }
+
+    util_logger.debug("Received ACK after beamWidth");
+
+    // --- Step 8: Send initialSeed ---
+    std::string initialSeedStr = std::to_string(initialSeed);
+    length = htonl(initialSeedStr.size());
+
+    util_logger.debug("Sending initialSeed length: " + std::to_string(ntohl(length)));
+    send(sockfd, &length, sizeof(length), 0);
+
+    util_logger.debug("Sending initialSeed: " + initialSeedStr);
+    if (send(sockfd, initialSeedStr.c_str(), initialSeedStr.size(), 0) <= 0) {
+        util_logger.error("Failed to send initialSeed");
+        close(sockfd);
+        return false;
+    }
+
+    bzero(ack, ACK_MESSAGE_SIZE);
+
+    util_logger.debug("Waiting for ACK after initialSeed");
+    if (recv(sockfd, ack, strlen("stream-c-length-ack"), 0) <= 0) {
+        util_logger.error("Failed to receive ACK after initialSeed");
+        close(sockfd);
+        return false;
+    }
+
+    util_logger.debug("Received ACK after initialSeed");
 
     // char start[ACK_MESSAGE_SIZE] = {0};
     // recv(sockfd, &start, sizeof(start), 0);
