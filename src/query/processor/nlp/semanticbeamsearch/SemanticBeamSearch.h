@@ -66,8 +66,8 @@ class SemanticBeamSearch {
     SemanticBeamSearch(FaissIndex *faissStore, FaissIndex *faissEdgeStore, TextEmbedder *textEmbedder,
                        std::vector<float> emb, int k, GraphConfig gc, vector<JasmineGraphServer::worker> workerList,
                        NodeManager *nodeManager);
-    std::vector<ScoredPath> getSeedNodes();
-    void semanticMultiHopBeamSearch(SharedBuffer &buffer, int numHops, int beamWidth);
+    std::vector<ScoredPath> getSeedNodes(int seedSize = 5);
+    void semanticMultiHopBeamSearch(SharedBuffer &buffer, int numHops, int beamWidth, int seedSize);
     nlohmann::json callRemoteExpansion(int partitionId, const std::vector<ScoredPath> &currentPaths,
                                        std::vector<ScoredPath> &expandedPaths,
                                        vector<std::string> &embeddingRequestsForNewlyExploredEdges, int hop,
