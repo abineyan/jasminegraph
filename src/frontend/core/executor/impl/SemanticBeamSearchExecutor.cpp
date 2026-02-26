@@ -178,7 +178,7 @@ void SemanticBeamSearchExecutor::doSemanticBeamSearch(
     std::string host, int port, std::string masterIP, int graphID,
     int partitionId, std::string query, SharedBuffer& sharedBuffer,
     int noOfPartitions, const std::string& workerListString) {
-    Utils::sendSbsQueryPlanToWorker(host, port, masterIP, graphID, partitionId, query, sharedBuffer, workerListString);
+    Utils::sendSbsQueryPlanToWorker(host, port, masterIP, graphID, partitionId, query, sharedBuffer, workerListString, 3, 15, 5);
 }
 
 int SemanticBeamSearchExecutor::getUid() {
