@@ -5387,7 +5387,9 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
         incrementalLocalStoreInstance->gc, workers, incrementalLocalStoreInstance->nm);
 
     SharedBuffer shared(50);
-    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15);
+
+    semanticBeamSearch->semanticMultiHopBeamSearch(shared, numHops, beamWidth, initialSeed);
+    // semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15, 5);
     auto startTime = std::chrono::high_resolution_clock::now();
     int time = 0;
 
@@ -5475,6 +5477,80 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
 
     const int numberOfPartitions = workers.size();
 
+    {
+        std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
+        bufferPool.reserve(numberOfPartitions);
+
+        for (int i = 0; i < numberOfPartitions; ++i) {
+            bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
+        }
+
+        // ---- Worker threads ----
+        std::vector<std::thread> workerThreads;
+
+        for (int i = 0; i < numberOfPartitions; ++i) {
+            const std::string& host = std::get<0>(workers[i]);
+            int port = std::get<1>(workers[i]);
+            int dataPort = std::get<2>(workers[i]);
+
+            workerThreads.emplace_back(
+                [host, port, i, &agentRequestCtx, &bufferPool, numberOfPartitions, &graphId, &workerListStr]() {
+                    Utils::sendSbsQueryPlanToWorker(host, port, "127.0.0.1", std::stoi(graphId), i,
+                                                    agentRequestCtx.query, *bufferPool[i], workerListStr, 0, 5, 20);
+
+                    instance_logger.info("[GraphRAG][SBS][Worker-" + std::to_string(i) + "] Query sent");
+                });
+        }
+
+        // ---- Reader threads ----
+        std::vector<std::thread> readThreads;
+        std::vector<json> results;
+        std::mutex resultsMutex;
+
+        for (int i = 0; i < numberOfPartitions; ++i) {
+            readThreads.emplace_back([i, &bufferPool, &results, &resultsMutex]() {
+                instance_logger.info("[GraphRAG][SBS][Reader-" + std::to_string(i) + "] Started");
+
+                while (true) {
+                    std::string data = bufferPool[i]->get();
+                    if (data == "-1") {
+                        instance_logger.debug("[GraphRAG][SBS][Reader-" + std::to_string(i) + "] End signal");
+                        break;
+                    }
+
+                    instance_logger.debug("[GraphRAG][SBS][Reader-" + std::to_string(i) + "] Data received");
+
+                    json parsed = json::parse(data);
+                    std::lock_guard<std::mutex> lock(resultsMutex);
+                    results.push_back(parsed);
+                }
+            });
+        }
+
+        for (auto& t : workerThreads)
+            if (t.joinable())
+                t.join();
+
+        for (auto& t : readThreads)
+            if (t.joinable())
+                t.join();
+
+        std::sort(results.begin(), results.end(), [](const json& a, const json& b) { return a["score"] > b["score"]; });
+
+        int k = 40;
+        if (results.size() > static_cast<size_t>(k)) {
+            results.resize(k);
+        }
+
+        std::string results_str;
+        for (const auto& r : results) {
+            results_str += r.dump(2) + "\n";  // pretty-print each JSON with indent=2
+        }
+
+        instance_logger.info("[GraphRAG][SBS] Top-" + std::to_string(results.size()) + " results selected:\n" +
+                             results_str);
+    }
+
     std::string planStr = AgentProtocol::getPlan(agentRequestCtx);
     instance_logger.info("Executing Agent Plan " + planStr);
 
@@ -5508,7 +5584,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
                 workerThreads.emplace_back(
                     [host, port, i, &obj, &bufferPool, numberOfPartitions, &graphId, &workerListStr]() {
                         Utils::sendSbsQueryPlanToWorker(host, port, "127.0.0.1", std::stoi(graphId), i, obj.query,
-                                                        *bufferPool[i], workerListStr, 5, 10, 15);
+                                                        *bufferPool[i], workerListStr, 3, 15, 5);
 
                         instance_logger.info("[GraphRAG][SBS][Worker-" + std::to_string(i) + "] Query sent");
                     });
