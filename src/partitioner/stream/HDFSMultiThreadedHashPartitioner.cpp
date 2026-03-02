@@ -152,7 +152,7 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
 
         // Process the edges from the local array
         while (!batch.empty()) {
-            hash_partitioner_logger.debug("Processing non empty");
+            // hash_partitioner_logger.debug("Processing non empty");
             std::string edge = batch.back();
             batch.pop_back();
 

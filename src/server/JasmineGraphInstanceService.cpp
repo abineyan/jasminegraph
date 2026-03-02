@@ -372,7 +372,7 @@ void JasmineGraphInstanceService::run(string masterHost, string host, int server
         return;
     }
 
-    listen(listenFd, PENDING_CONNECTION_QUEUE_SIZE);
+    listen(listenFd, 1024);
 
     len = sizeof(clntAdd);
 
@@ -3341,6 +3341,13 @@ static void streaming_kg_construction(
         }
     }
 
+    string workersPartitionMapping = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
+    instance_logger.info("Received workers to partition mapping: " + workersPartitionMapping);
+    if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
+        *loop_exit_p = true;
+        return;
+    }
+
     string hdfsPath = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
     instance_logger.info("Received HDFS Path: " + hdfsPath);
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
@@ -3352,7 +3359,9 @@ static void streaming_kg_construction(
 
     Pipeline* streamHandler =
         new Pipeline(connFd, hdfsConnector->getFileSystem(), hdfsPath, noOfPartitions, std::stoi(graphID), masterIP,
-                     workers, llmRunnerSockets, llm_inference_engine, llm, chunkSize, chunksPerBatch, startFromBytes);
+                     workers, workersPartitionMapping, llmRunnerSockets, llm_inference_engine, llm, chunkSize,
+                     chunksPerBatch,
+                     startFromBytes);
     instance_logger.info("Started listening to " + hdfsPath);
 
     streamHandler->init();
@@ -3721,6 +3730,8 @@ static void streaming_tuple_extraction(
       OpenTelemetryUtil::addSpanAttribute("graph.id", graphID);
       OpenTelemetryUtil::addSpanAttribute("operation.type", "streaming_tuple_extraction");
 
+      auto chunkStartTime = std::chrono::high_resolution_clock::now();
+
 
     // Consumer thread that prints tuples from buffer
     std::thread consumer([&]() {
@@ -3774,15 +3785,29 @@ static void streaming_tuple_extraction(
           break;
         }
         if (tupleData == "-1") {
+            auto chunkEndTime = std::chrono::high_resolution_clock::now();
+            long totalChunkTimeMs =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+        chunkEndTime - chunkStartTime).count();
             string tupleArrayString;
             for (const string& tuple : trace_tuples) {
                 tupleArrayString += tuple;
                 tupleArrayString += ", \n";
             }
-            chunkTrace.addAttributes({
-       {"tuple_count", std::to_string(tuple_id)},
-       {"tuples", tupleArrayString}
-            });
+            double averageTimePerTupleMs = 0.0;
+
+if (tuple_id > 0) {
+    averageTimePerTupleMs =
+        (double) totalChunkTimeMs / tuple_id;
+}     ScopedTracer tupleSpan(
+                            "average_tuple_generation_time",
+                            {
+                                {"time", to_string(averageTimePerTupleMs)}
+                            });
+       //      chunkTrace.addAttributes({
+       // {"tuple_count", std::to_string(tuple_id)},
+       // {"tuples", tupleArrayString}
+       //      });
           instance_logger.info("Received end signal from producer");
           // instance_logger.info(chunk);
           // instance_logger.info(tupleArrayString);
@@ -3791,6 +3816,7 @@ static void streaming_tuple_extraction(
         }
       }
     });
+
     streamer->streamChunk("chunk1", chunk, tupleBuffer);
     consumer.join();
   }
@@ -5950,6 +5976,8 @@ static void hdfs_start_stream_command(int connFd, bool* loop_exit_p, bool isLoca
     }
     // delete file chunk after adding to the store
     Utils::deleteFile(fullFilePath);
+    *loop_exit_p = true;
+
 }
 
 static void processFile(string fileName, bool isLocal, InstanceStreamHandler& handler, bool isEmbedGraph) {
@@ -6024,7 +6052,11 @@ static void processFile(string fileName, bool isLocal, InstanceStreamHandler& ha
         localStore->setNodeManger(nm);
     }
     lock.unlock();
+    OTEL_TRACE_FUNCTION();
+    string currentTraceContext = OpenTelemetryUtil::getCurrentTraceContext();
+    auto processFileStartTime = std::chrono::high_resolution_clock::now();
 
+    long tripleCount = 0;
     std::thread embeddingThread;
     if (isEmbedGraph) {
         localStore->processing_done = false;
@@ -6033,6 +6065,7 @@ static void processFile(string fileName, bool isLocal, InstanceStreamHandler& ha
     }
     std::string line;
     while (std::getline(file, line)) {
+        tripleCount++;
         instance_logger.debug("currentLine " + line);
         if (isLocal) {
             handler.handleLocalEdge(line, std::to_string(graphId), std::to_string(partitionIndex),
@@ -6048,6 +6081,19 @@ static void processFile(string fileName, bool isLocal, InstanceStreamHandler& ha
     if (embeddingThread.joinable()) {
         embeddingThread.join();
     }
+    auto processFileEndTime = std::chrono::high_resolution_clock::now();
+     long totalFileTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+         processFileEndTime - processFileStartTime).count();
+    double averageTimePerTupleMs = 0.0;
+    if (tripleCount > 0) {
+        averageTimePerTupleMs =
+         (double) totalFileTimeMs / tripleCount;
+    }
+    ScopedTracer tupleSpan(
+                             "average_tuple_persitancetime",
+                             {
+                                 {"time", to_string(averageTimePerTupleMs)}
+                             });
     delete NodeBlock::nodesDB;
     file.close();
     instance_logger.info("Finished processing file: " + filePath);

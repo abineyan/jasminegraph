@@ -280,7 +280,7 @@ void JasmineGraphServer::start_workers() {
         while (portCount < numberOfWorkersPerHost) {
             portVector.push_back(workerPort);
             dataPortVector.push_back(workerDataPort);
-            hostWorkerList.push_back({*it, workerPort, workerDataPort});
+            hostWorkerList.push_back({workerIDCounter, *it, workerPort, workerDataPort});
             // FIXME: When there are more than 1 worker in the same host, one workers ports will replace the entries of
             // other workers port entries in hostPortMap
             hostPortMap[*it] = make_pair(workerPort, workerDataPort);
@@ -299,7 +299,7 @@ void JasmineGraphServer::start_workers() {
         if (hostListModeNWorkers > 0) {
             portVector.push_back(workerPort);
             dataPortVector.push_back(workerDataPort);
-            hostWorkerList.push_back({*it, workerPort, workerDataPort});
+            hostWorkerList.push_back({workerIDCounter, *it, workerPort, workerDataPort});
             hostPortMap[*it] = make_pair(workerPort, workerDataPort);
             hostListModeNWorkers--;
             string is_public = "false";
@@ -477,7 +477,7 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "DOCKER_API_VERSION=1.43 docker -H ssh://" + host + " run --cpus=2.5 -v " + instanceDataFolder + ":" +
+                        "DOCKER_API_VERSION=1.43 docker -H ssh://" + host + " run -v " + instanceDataFolder + ":" +
                             instanceDataFolder +
                         " -v " + aggregateDataFolder + ":" + aggregateDataFolder +
                             " -v /var/tmp:/var/tmp/hdfs/filechunks" " -v " + nmonFileLocation + ":" +

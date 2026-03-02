@@ -319,22 +319,28 @@ NodeBlock *NodeManager::addNode(std::string nodeId) {
 }
 
 RelationBlock *NodeManager::addLocalEdge(std::pair<std::string, std::string> edge) {
-    pthread_mutex_lock(&lockEdgeAdd);
+    try {
+        pthread_mutex_lock(&lockEdgeAdd);
 
-    NodeBlock *sourceNode = this->addNode(edge.first);
-    NodeBlock *destNode = this->addNode(edge.second);
-    RelationBlock *newRelation = this->addLocalRelation(*sourceNode, *destNode);
-    if (newRelation) {
-        newRelation->setDestination(destNode);
-        newRelation->setSource(sourceNode);
-        this->nextEdgeIndex++;
+        NodeBlock *sourceNode = this->addNode(edge.first);
+        NodeBlock *destNode = this->addNode(edge.second);
+        RelationBlock *newRelation = this->addLocalRelation(*sourceNode, *destNode);
+        if (newRelation) {
+            newRelation->setDestination(destNode);
+            newRelation->setSource(sourceNode);
+            this->nextEdgeIndex++;
+        }
+
+        pthread_mutex_unlock(&lockEdgeAdd);
+
+        node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
+        " Destination DB block address " + std::to_string(destNode->addr));
+        return newRelation;
+    } catch (exception &e) {
+        node_manager_logger.error("Error while adding the new edge/relation for source ");
+        return nullptr;
     }
 
-    pthread_mutex_unlock(&lockEdgeAdd);
-
-    node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
-                              " Destination DB block address " + std::to_string(destNode->addr));
-    return newRelation;
 }
 
 RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> edge) {

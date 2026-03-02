@@ -2399,11 +2399,39 @@ bool JasmineGraphFrontEnd::constructKGStreamHDFSCommand(std::string masterIP, in
     hdfsServerIp + "\", \"" +
     hdfsPort +
     "\")";
+
+
             frontend_logger.info("Constructing new Knowledge Graph with new GraphID: " + to_string(newGraphID));
 
         newGraphID = sqlite->runInsert(insertQuery);
     }
     JasmineGraphServer::worker designatedWorker = JasmineGraphServer::getDesignatedWorker();
+
+    string sqlStatement =
+      "SELECT DISTINCT worker_idworker,partition_idpartition "
+      "FROM worker_has_partition INNER JOIN worker ON worker_has_partition.worker_idworker=worker.idworker "
+      "WHERE partition_graph_idgraph=" +
+      to_string(newGraphID) + ";";
+
+    const std::vector<vector<pair<string, string>>> &results = sqlite->runSelect(sqlStatement);
+
+    std::map<string, std::vector<string>> partitionMap;
+
+    for (auto i = results.begin(); i != results.end(); ++i) {
+        const std::vector<pair<string, string>> &rowData = *i;
+
+        string workerID = rowData.at(0).second;
+        string partitionId = rowData.at(1).second;
+
+        if (partitionMap.find(workerID) == partitionMap.end()) {
+            std::vector<string> partitionVec;
+            partitionVec.push_back(partitionId);
+            partitionMap[workerID] = partitionVec;
+        } else {
+            partitionMap[workerID].push_back(partitionId);
+        }
+
+    }
     auto stopFlag = std::make_shared<std::atomic<bool>>(false);
     {
         std::lock_guard<std::mutex> lock(threadMapMutex);

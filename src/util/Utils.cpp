@@ -1782,7 +1782,7 @@ bool Utils::sendQueryPlanToWorker(const std::string& host, int port, const std::
 bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string masterIP, int graphID, int partitionId,
                                      std::string query, SharedBuffer& sharedBuffer,
                                      const std::string& workerListString) {
-  util_logger.debug("Connecting to worker at " + host + ":" + std::to_string(port));
+  util_logger.info("Connecting to worker at " + host + ":" + std::to_string(port));
   util_logger.debug(
       "Parameters: host=" + host + ", port=" + std::to_string(port) +
       ", masterIP=" + masterIP + ", graphID=" + std::to_string(graphID) +

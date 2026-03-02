@@ -36,6 +36,10 @@ class Pipeline {
              std::string masterIP, vector<JasmineGraphServer::worker>& workerList, std::vector<std::string> llmRunners,
              std::string llmInferenceEngine, std::string llm, string chunkSize, std::string chunksPerBatch,
              long startFromBytes);
+    Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
+             std::string masterIP, vector<JasmineGraphServer::worker>& workerList, std::string workersPartitionMapping,
+             std::vector<std::string> llmRunners, std::string llmInferenceEngine, std::string llm,
+             std::string chunkSize, std::string chunksPerBatch, long startFromBytes);
     Pipeline(int connFd,
                const std::string& filePath,
                int numberOfPartitions,
@@ -124,6 +128,7 @@ class Pipeline {
     // std::atomic<long> realtime_bytes_read_so_far{0};
     std::atomic<long> vertexCount{0};
     std::atomic<long> edgeCount{0};
+    string workersPartitionMapping;
 };
 
 #endif  // JASMINEGRAPH_HDFSPIPELINE_H

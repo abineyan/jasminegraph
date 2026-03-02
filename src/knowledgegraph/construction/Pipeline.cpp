@@ -46,7 +46,8 @@ const size_t OVERLAP_BYTES = 1024;  // bytes to overlap between chunks to avoid 
 const std::string END_OF_STREAM_MARKER = "-1";
 
 Pipeline::Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
-                   std::string masterIP, vector<JasmineGraphServer::worker>& workerList,
+                   std::string masterIP, vector<JasmineGraphServer::worker>& workerList,std::string
+                   workersPartitionMapping,
                    std::vector<std::string> llmRunners, std::string llmInferenceEngine, std::string llm,
                    std::string chunkSize, std::string chunksPerBatch, long startFromBytes)
     : connFd(connFd),
@@ -58,6 +59,7 @@ Pipeline::Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, i
       graphId(graphId),
       masterIP(masterIP),
       workerList(workerList),
+workersPartitionMapping(workersPartitionMapping),
       llmRunners(llmRunners),
       llmInferenceEngine(llmInferenceEngine),
       llm(llm),
@@ -103,168 +105,173 @@ void Pipeline::init() {
 // Reads chunks of fixed byte size from an AHDFS file and pushes them as chunks
 // with generated doc_id
 void Pipeline::streamFromHDFSIntoBuffer() {
-    auto startTime = chrono::high_resolution_clock::now();
-    kg_pipeline_stream_handler_logger.info("Started streaming data from HDFS into data buffer...");
-    hdfsFileInfo* fileInfo = hdfsGetPathInfo(fileSystem, filePath.c_str());
-    if (!fileInfo) {
-        kg_pipeline_stream_handler_logger.error("Failed to get HDFS file info.");
-        return;
-    }
-    int64_t total_file_size = fileInfo->mSize;
-    hdfsFreeFileInfo(fileInfo, 1);
-    hdfsFile file = hdfsOpenFile(fileSystem, filePath.c_str(), O_RDONLY, 0, 0, 0);
-    if (!file) {
-        kg_pipeline_stream_handler_logger.error("Failed to open HDFS file.");
-        isReading = false;
-        dataBufferCV.notify_all();
-        return;
-    }
-
-    kg_pipeline_stream_handler_logger.info("Successfully opened HDFS file: " + filePath);
-
-    std::vector<char> buffer(std::stol(chunkSize));
-    int64_t read_bytes = 0;
-    int chunk_idx = 0;
-    std::string leftover;
-
-    if (startFromBytes > 0) {
-        if (startFromBytes >= total_file_size) {
-            kg_pipeline_stream_handler_logger.error("startFromBytes exceeds total file size.");
-            hdfsCloseFile(fileSystem, file);
+    try {
+        auto startTime = chrono::high_resolution_clock::now();
+        kg_pipeline_stream_handler_logger.info("Started streaming data from HDFS into data buffer...");
+        hdfsFileInfo* fileInfo = hdfsGetPathInfo(fileSystem, filePath.c_str());
+        if (!fileInfo) {
+            kg_pipeline_stream_handler_logger.error("Failed to get HDFS file info.");
             return;
         }
-
-        if (hdfsSeek(fileSystem, file, startFromBytes) != 0) {
-            kg_pipeline_stream_handler_logger.error("Failed to seek to startFromBytes: " +
-                                                    std::to_string(startFromBytes));
-            hdfsCloseFile(fileSystem, file);
-            return;
-        }
-        bytes_read_so_far = startFromBytes;  // Initialize with startFromBytes
-        realtime_bytes_read_so_far = startFromBytes;
-
-        kg_pipeline_stream_handler_logger.info("Starting read from byte offset: " + std::to_string(startFromBytes));
-    }
-    while ((read_bytes = hdfsRead(fileSystem, file, buffer.data(), std::stol(chunkSize))) > 0) {
-        if (stopFlag) {
+        int64_t total_file_size = fileInfo->mSize;
+        hdfsFreeFileInfo(fileInfo, 1);
+        hdfsFile file = hdfsOpenFile(fileSystem, filePath.c_str(), O_RDONLY, 0, 0, 0);
+        if (!file) {
+            kg_pipeline_stream_handler_logger.error("Failed to open HDFS file.");
             isReading = false;
-            kg_pipeline_stream_handler_logger.info("Received Stop command , terminating");
-            break;
+            dataBufferCV.notify_all();
+            return;
         }
 
-        int64_t remaining_bytes = total_file_size - bytes_read_so_far;
-        double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
+        kg_pipeline_stream_handler_logger.info("Successfully opened HDFS file: " + filePath);
 
-        kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
-                                               " read: " + std::to_string(read_bytes) + " bytes, " +
-                                               "remaining bytes: " + std::to_string(remaining_bytes) + ", " +
-                                               "progress: " + std::to_string(percent_read) + "%");
-        kg_pipeline_stream_handler_logger.info("Starting to process chunk " + std::to_string(chunk_idx));
-        std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
+        std::vector<char> buffer(std::stol(chunkSize));
+        int64_t read_bytes = 0;
+        int chunk_idx = 0;
+        std::string leftover;
 
-        kg_pipeline_stream_handler_logger.debug("Read chunk " + std::to_string(chunk_idx) + " with " +
-                                               std::to_string(read_bytes) + " bytes");
-        kg_pipeline_stream_handler_logger.debug("Current leftover size: " + std::to_string(leftover.size()));
-        size_t split_pos = chunk_text.rfind("\n\n");
-        if (split_pos == std::string::npos) {
-            // If no paragraph boundary, split at last newline
-            split_pos = chunk_text.find_last_of('\n');
-            // if (split_pos == std::string::npos) {
-            //     // If no newline, split at last space
-            //     split_pos = chunk_text.find_last_of(' ');
-            // }
+        if (startFromBytes > 0) {
+            if (startFromBytes >= total_file_size) {
+                kg_pipeline_stream_handler_logger.error("startFromBytes exceeds total file size.");
+                hdfsCloseFile(fileSystem, file);
+                return;
+            }
+
+            if (hdfsSeek(fileSystem, file, startFromBytes) != 0) {
+                kg_pipeline_stream_handler_logger.error("Failed to seek to startFromBytes: " +
+                                                        std::to_string(startFromBytes));
+                hdfsCloseFile(fileSystem, file);
+                return;
+            }
+            bytes_read_so_far = startFromBytes;  // Initialize with startFromBytes
+            realtime_bytes_read_so_far = startFromBytes;
+
+            kg_pipeline_stream_handler_logger.info("Starting read from byte offset: " + std::to_string(startFromBytes));
         }
-        // Find last newline to keep only complete lines in chunk pushed to
-        // dataBuffer
-        // size_t last_newline = chunk_text.find_last_of('\n');
-        if (split_pos == std::string::npos) {
-            kg_pipeline_stream_handler_logger.debug("No newline found in chunk " + std::to_string(chunk_idx) +
-                                                   ", storing as leftover");
-            leftover = chunk_text;
-            kg_pipeline_stream_handler_logger.debug("Updated leftover size: " + std::to_string(leftover.size()));
-            continue;
-        }
+        while ((read_bytes = hdfsRead(fileSystem, file, buffer.data(), std::stol(chunkSize))) > 0) {
+            if (stopFlag) {
+                isReading = false;
+                kg_pipeline_stream_handler_logger.info("Received Stop command , terminating");
+                break;
+            }
 
-        // Split into complete lines and leftover partial line
-        std::string full_lines_chunk = chunk_text.substr(0, split_pos + 1);
-        size_t overlap_start = (full_lines_chunk.size() > std::stod(chunkSize)*0.3) ? full_lines_chunk.size() -
-            std::stod(chunkSize)*0.3 : 0;
+            int64_t remaining_bytes = total_file_size - bytes_read_so_far;
+            double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
 
-        // make sure leftover starts at a newline
-        size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
-        if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
-            leftover = full_lines_chunk.substr(newline_pos + 1);
-        } else {
-            leftover.clear();
-        }
+            kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
+            " read: " + std::to_string(read_bytes) + " bytes, " +
+            "remaining bytes: " + std::to_string(remaining_bytes) + ", " +
+            "progress: " + std::to_string(percent_read) + "%");
+            kg_pipeline_stream_handler_logger.info("Starting to process chunk " + std::to_string(chunk_idx));
+            std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
 
-        kg_pipeline_stream_handler_logger.debug("Full lines chunk size: " + std::to_string(full_lines_chunk.size()));
-        kg_pipeline_stream_handler_logger.debug("Leftover after split size: " + std::to_string(leftover.size()));
-        kg_pipeline_stream_handler_logger.debug("Pushing chunk " + std::to_string(chunk_idx) + " to dataBuffer");
+            kg_pipeline_stream_handler_logger.debug("Read chunk " + std::to_string(chunk_idx) + " with " +
+            std::to_string(read_bytes) + " bytes");
+            kg_pipeline_stream_handler_logger.debug("Current leftover size: " + std::to_string(leftover.size()));
+            size_t split_pos = chunk_text.rfind("\n\n");
+            if (split_pos == std::string::npos) {
+                // If no paragraph boundary, split at last newline
+                split_pos = chunk_text.find_last_of('\n');
+                // if (split_pos == std::string::npos) {
+                //     // If no newline, split at last space
+                //     split_pos = chunk_text.find_last_of(' ');
+                // }
+            }
+            // Find last newline to keep only complete lines in chunk pushed to
+            // dataBuffer
+            // size_t last_newline = chunk_text.find_last_of('\n');
+            if (split_pos == std::string::npos) {
+                kg_pipeline_stream_handler_logger.debug("No newline found in chunk " + std::to_string(chunk_idx) +
+                ", storing as leftover");
+                leftover = chunk_text;
+                kg_pipeline_stream_handler_logger.debug("Updated leftover size: " + std::to_string(leftover.size()));
+                continue;
+            }
 
-        // Wait and push to dataBuffer safely
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        kg_pipeline_stream_handler_logger.debug("Waiting to acquire lock for dataBuffer push");
-        dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+            // Split into complete lines and leftover partial line
+            std::string full_lines_chunk = chunk_text.substr(0, split_pos + 1);
+            size_t overlap_start = (full_lines_chunk.size() > std::stod(chunkSize)*0.3) ? full_lines_chunk.size() -
+                std::stod(chunkSize)*0.3 : 0;
 
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(full_lines_chunk), read_bytes});
-        kg_pipeline_stream_handler_logger.debug(
+            // make sure leftover starts at a newline
+            size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
+            if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
+                leftover = full_lines_chunk.substr(newline_pos + 1);
+            } else {
+                leftover.clear();
+            }
+
+            kg_pipeline_stream_handler_logger.debug("Full lines chunk size: " + std::to_string(full_lines_chunk.size()));
+            kg_pipeline_stream_handler_logger.debug("Leftover after split size: " + std::to_string(leftover.size()));
+            kg_pipeline_stream_handler_logger.debug("Pushing chunk " + std::to_string(chunk_idx) + " to dataBuffer");
+
+            // Wait and push to dataBuffer safely
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            kg_pipeline_stream_handler_logger.debug("Waiting to acquire lock for dataBuffer push");
+            dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(full_lines_chunk), read_bytes});
+            kg_pipeline_stream_handler_logger.debug(
             "Chunk " + std::to_string(chunk_idx) +
             " pushed to dataBuffer. Current buffer size: " + std::to_string(dataBuffer.size()));
-        lock.unlock();
-        dataBufferCV.notify_all();
+            lock.unlock();
+            dataBufferCV.notify_all();
 
-        chunk_idx++;
-        kg_pipeline_stream_handler_logger.debug("Finished processing chunk " + std::to_string(chunk_idx));
-    }
-
-    // Push leftover partial line if any (last chunk)
-    if (!leftover.empty()) {
-        chunk_idx++;
-        kg_pipeline_stream_handler_logger.debug("Pushing leftover data to dataBuffer");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
-
-        lock.unlock();
-        dataBufferCV.notify_one();
-    }
-
-    if (read_bytes < 0) {
-        kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file");
-    }
-
-    hdfsCloseFile(fileSystem, file);
-    kg_pipeline_stream_handler_logger.debug("Closed HDFS file: " + filePath);
-    isReading = false;
-
-    if (!leftover.empty()) {
-        kg_pipeline_stream_handler_logger.debug("Pushing leftover data again to data buffer after closing file");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
-
-        lock.unlock();
-        dataBufferCV.notify_all();
-    }
-
-    {
-        kg_pipeline_stream_handler_logger.debug("Pushing END_OF_STREAM_MARKER to data buffer");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        // close all workers
-        for (auto worker : workerList) {
-            dataBuffer.push(Chunk{to_string(chunk_idx), END_OF_STREAM_MARKER, read_bytes});
+            chunk_idx++;
+            kg_pipeline_stream_handler_logger.debug("Finished processing chunk " + std::to_string(chunk_idx));
         }
-        lock.unlock();
-    }
 
-    dataBufferCV.notify_all();
-    auto endTime = high_resolution_clock::now();
-    std::chrono::duration<double> duration = endTime - startTime;
-    kg_pipeline_stream_handler_logger.debug("Successfully streamed data from HDFS into data buffer.");
-    kg_pipeline_stream_handler_logger.debug("Time taken to read from HDFS: " + to_string(duration.count()) +
-        " seconds");
+        // Push leftover partial line if any (last chunk)
+        if (!leftover.empty()) {
+            chunk_idx++;
+            // kg_pipeline_stream_handler_logger.debug("Pushing leftover data to dataBuffer");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
+
+            lock.unlock();
+            dataBufferCV.notify_one();
+        }
+
+        if (read_bytes < 0) {
+            kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file");
+        }
+
+        hdfsCloseFile(fileSystem, file);
+        kg_pipeline_stream_handler_logger.debug("Closed HDFS file: " + filePath);
+        isReading = false;
+
+        if (!leftover.empty()) {
+            kg_pipeline_stream_handler_logger.debug("Pushing leftover data again to data buffer after closing file");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
+
+            lock.unlock();
+            dataBufferCV.notify_all();
+        }
+
+        {
+            kg_pipeline_stream_handler_logger.debug("Pushing END_OF_STREAM_MARKER to data buffer");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            // close all workers
+            for (auto worker : workerList) {
+                dataBuffer.push(Chunk{to_string(chunk_idx), END_OF_STREAM_MARKER, read_bytes});
+            }
+            lock.unlock();
+        }
+
+        dataBufferCV.notify_all();
+        auto endTime = high_resolution_clock::now();
+        std::chrono::duration<double> duration = endTime - startTime;
+        kg_pipeline_stream_handler_logger.debug("Successfully streamed data from HDFS into data buffer.");
+        kg_pipeline_stream_handler_logger.debug("Time taken to read from HDFS: " + to_string(duration.count()) +
+            " seconds");
+    } catch (std::exception& e) {
+        kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file: ");
+    }
 }
 void Pipeline::streamFromLocalFileIntoBuffer() {
+
     auto startTime = chrono::high_resolution_clock::now();
     kg_pipeline_stream_handler_logger.info("Started streaming data from local file into data buffer...");
 
@@ -307,10 +314,10 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
         std::streamsize read_bytes = file.gcount();
         bytes_read_so_far += read_bytes;
         double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
-
+        //
         kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
-                                               " read: " + std::to_string(read_bytes) + " bytes, " +
-                                               "progress: " + std::to_string(percent_read) + "%");
+        " read: " + std::to_string(read_bytes) + " bytes, " +
+        "progress: " + std::to_string(percent_read) + "%");
 
         std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
 
@@ -370,77 +377,82 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
 }
 
 void Pipeline::startStreamingFromBufferToWorkers() {
-    auto startTime = high_resolution_clock::now();
+    try {
+        auto startTime = high_resolution_clock::now();
 
-    std::thread readerThread;
+        std::thread readerThread;
 
-    // Start the appropriate reader thread based on fileSystem
-    if (fileSystem == nullptr) {
-        // Local file streaming
-        kg_pipeline_stream_handler_logger.info("Starting local file streaming thread...");
-        readerThread = std::thread(&Pipeline::streamFromLocalFileIntoBuffer, this);
-    } else {
-        // HDFS streaming
-        kg_pipeline_stream_handler_logger.info("Starting HDFS streaming thread...");
-        readerThread = std::thread(&Pipeline::streamFromHDFSIntoBuffer, this);
-    }
-
-    std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
-
-    bufferPool.reserve(stoi(chunksPerBatch));  // Pre-allocate space for pointers
-    for (size_t i = 0; i < stoi(chunksPerBatch); ++i) {
-        bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
-    }
-
-    std::vector<std::thread> workerThreads;
-    int count = 0;
-    for (auto& worker : workerList) {
-        if (count >= stoi(chunksPerBatch)) break;
-        workerThreads.emplace_back(&Pipeline::extractTuples, this, worker.hostname, worker.port, masterIP, graphId,
-                                   count, std::ref(dataBuffer), std::ref(*bufferPool[count]));
-        count++;
-    }
-
-    string meta = processTupleAndSaveInPartition(bufferPool).dump();
-    if (readerThread.joinable()) {
-        readerThread.join();
-    }
-
-    for (auto& worker : workerThreads) {
-        if (worker.joinable()) {
-            worker.join();
+        // Start the appropriate reader thread based on fileSystem
+        if (fileSystem == nullptr) {
+            // Local file streaming
+            kg_pipeline_stream_handler_logger.info("Starting local file streaming thread...");
+            readerThread = std::thread(&Pipeline::streamFromLocalFileIntoBuffer, this);
+        } else {
+            // HDFS streaming
+            kg_pipeline_stream_handler_logger.info("Starting HDFS streaming thread...");
+            readerThread = std::thread(&Pipeline::streamFromHDFSIntoBuffer, this);
         }
+
+        std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
+
+        bufferPool.reserve(stoi(chunksPerBatch));  // Pre-allocate space for pointers
+        for (size_t i = 0; i < stoi(chunksPerBatch); ++i) {
+            bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
+        }
+
+        std::vector<std::thread> workerThreads;
+        int count = 0;
+        for (auto& worker : workerList) {
+            if (count >= stoi(chunksPerBatch)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            workerThreads.emplace_back(&Pipeline::extractTuples, this, worker.hostname, worker.port, masterIP, graphId,
+                                       count, std::ref(dataBuffer), std::ref(*bufferPool[count]));
+            count++;
+        }
+
+        string meta = processTupleAndSaveInPartition(bufferPool).dump();
+        if (readerThread.joinable()) {
+            readerThread.join();
+        }
+
+        for (auto& worker : workerThreads) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        isProcessing = false;
+
+        auto endTime = high_resolution_clock::now();
+        std::chrono::duration<double> duration = endTime - startTime;
+
+        kg_pipeline_stream_handler_logger.debug(meta);
+        char data[FED_DATA_LENGTH + 1];
+
+        Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, META.c_str(), JasmineGraphInstanceProtocol::OK);
+
+        char ack3[ACK_MESSAGE_SIZE] = {0};
+        int message_length = meta.length();
+        int converted_number = htonl(message_length);
+        kg_pipeline_stream_handler_logger.debug("Sending content length: " + to_string(converted_number));
+
+        if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(), converted_number,
+                                          JasmineGraphInstanceProtocol::OK)) {
+            Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
+            close(connFd);
+            return;
+                                          }
+
+        if (!Utils::send_str_wrapper(connFd, meta)) {
+            close(connFd);
+            return;
+        }
+        Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, DONE.c_str(), JasmineGraphInstanceProtocol::OK);
+
+        kg_pipeline_stream_handler_logger.debug(
+            "Total time taken for streaming from HDFS into partitions: " + to_string(duration.count()) + " seconds");
+    } catch (std::exception& e) {
+        kg_pipeline_stream_handler_logger.error("Error while streaming from buffer to Workers");
     }
-    isProcessing = false;
-
-    auto endTime = high_resolution_clock::now();
-    std::chrono::duration<double> duration = endTime - startTime;
-
-    kg_pipeline_stream_handler_logger.debug(meta);
-    char data[FED_DATA_LENGTH + 1];
-
-    Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, META.c_str(), JasmineGraphInstanceProtocol::OK);
-
-    char ack3[ACK_MESSAGE_SIZE] = {0};
-    int message_length = meta.length();
-    int converted_number = htonl(message_length);
-    kg_pipeline_stream_handler_logger.debug("Sending content length: " + to_string(converted_number));
-
-    if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(), converted_number,
-                                      JasmineGraphInstanceProtocol::OK)) {
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
-        close(connFd);
-        return;
-    }
-
-    if (!Utils::send_str_wrapper(connFd, meta)) {
-        close(connFd);
-        return;
-    }
-    Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, DONE.c_str(), JasmineGraphInstanceProtocol::OK);
-
-    kg_pipeline_stream_handler_logger.debug(
-        "Total time taken for streaming from HDFS into partitions: " + to_string(duration.count()) + " seconds");
 }
 
 json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<SharedBuffer>>& tupleBuffer) {
@@ -448,8 +460,28 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
 
     kg_pipeline_stream_handler_logger.debug("Starting processTupleAndSaveInPartition");
     Partitioner partitioner(numberOfPartitions, graphId,  spt::FENNEL, sqlite,  true);
+    std::vector<JasmineGraphServer::worker> workersPartitionMappingList;
+    kg_pipeline_stream_handler_logger.info(workersPartitionMapping);
+    std::stringstream ss(workersPartitionMapping);
+    std::string item;
+
+    while (std::getline(ss, item, ',')) {  // split by comma
+        std::stringstream itemSS(item);
+        std::string hostname, portStr, dataPortStr;
+
+        if (!std::getline(itemSS, hostname, ':')) continue;
+        if (!std::getline(itemSS, portStr, ':')) continue;
+        if (!std::getline(itemSS, dataPortStr, ':')) continue;
+
+        JasmineGraphServer::worker w;
+        w.hostname = hostname;
+        w.port = std::stoi(portStr);
+        w.dataPort = std::stoi(dataPortStr);
+
+        workersPartitionMappingList.push_back(w);
+    }
     HDFSMultiThreadedHashPartitioner partitions(numberOfPartitions, graphId, masterIP, true,
-        workerList, true, 100,
+        workersPartitionMappingList, true, 1000,
         sqlite);
     std::hash<std::string> hasher;
     std::vector<std::thread> tupleThreads;
@@ -457,7 +489,7 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
     using namespace std::chrono;
 
     auto nextTick = steady_clock::now();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     while (metaThreadRunning.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(60000));
         try {
@@ -518,9 +550,28 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
 
         tupleThreads.emplace_back([&, tupleBufferRef, i]() {
             kg_pipeline_stream_handler_logger.debug("Tuple thread started for partition " + std::to_string(i));
+            long tripleCount = 0;
+            system_clock::time_point snapShotTime = std::chrono::high_resolution_clock::now();
+            system_clock::time_point prevSnapShotTime = std::chrono::high_resolution_clock::now();
+
             while (isProcessing) {
 
+if (tripleCount % 10) {
+    prevSnapShotTime = snapShotTime;
+    snapShotTime = std::chrono::high_resolution_clock::now();
 
+    long totalTupleTimeMs =
+  std::chrono::duration_cast<std::chrono::milliseconds>(
+      snapShotTime - prevSnapShotTime).count();
+    snapShotTime = std::chrono::high_resolution_clock::now();
+
+    ScopedTracer tupleSpan(
+                               "average_tuple_entity_duplication_and_partitioning_time",
+                               {
+                                   {"time", to_string( (double) totalTupleTimeMs / 10)}
+                               });
+
+}
 
                     std::string line = tupleBufferRef->get();
                     kg_pipeline_stream_handler_logger.debug("Thread " + std::to_string(i) +
@@ -791,14 +842,14 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                 kg_pipeline_stream_handler_logger.debug("776");
 
                 Chunk chunkData = dataBuffer.front();
-                kg_pipeline_stream_handler_logger.debug("data buffer size" + to_string(dataBuffer.size()) );
+                // kg_pipeline_stream_handler_logger.debug("data buffer size" + to_string(dataBuffer.size()) );
 
                 chunk = chunkData.text;
                 kg_pipeline_stream_handler_logger.debug("778");
                 dataBuffer.pop();
 
                 kg_pipeline_stream_handler_logger.debug("Processing chunk for partitionId: " +
-                    std::to_string(partitionId));
+                std::to_string(partitionId));
                 lock.unlock();
                 dataBufferCV.notify_all();
 
@@ -898,12 +949,12 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                         ssize_t ret = 0;
                         size_t to_read = sizeof(int);
                         char* p = reinterpret_cast<char*>(&tuple_length_net);
-                        kg_pipeline_stream_handler_logger.debug("889");
+                        // kg_pipeline_stream_handler_logger.debug("889");
 
                         while (to_read > 0) {
                             ret = recv(sockfd, p + (sizeof(int) - to_read), to_read, 0);
                             if (ret < 0) {
-                                kg_pipeline_stream_handler_logger.debug("894");
+                                // kg_pipeline_stream_handler_logger.debug("894");
 
                                 if (errno == EINTR) {
                                     kg_pipeline_stream_handler_logger.error(std::string("Failed to receive tuple length: ") + strerror(errno));
@@ -913,7 +964,7 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                                 kg_pipeline_stream_handler_logger.error(std::string("Failed to receive tuple length: ") + strerror(errno));
                                 retry = true;
                                 retryChunk = &chunkData;
-                                kg_pipeline_stream_handler_logger.debug("904");
+                                // kg_pipeline_stream_handler_logger.debug("904");
                                 break;
                             } else if (ret == 0) {
                                 kg_pipeline_stream_handler_logger.error("Peer closed connection while reading tuple length");
@@ -959,7 +1010,7 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                             received += ret;
                         }
 
-                        kg_pipeline_stream_handler_logger.debug("902");
+                        // kg_pipeline_stream_handler_logger.debug("902");
 
                         if (received != static_cast<size_t>(tuple_length)) {
                             kg_pipeline_stream_handler_logger.error("Incomplete tuple received, expected " +
@@ -1144,10 +1195,70 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
     } else {
         workerCount = llmRunnerSockets.size();
     }
-    std::unordered_map<std::string, int> workerCountMap;
+    std::unordered_map<std::string, std::vector<JasmineGraphServer::worker>> hostToWorkers;
 
     auto workerList = JasmineGraphServer::getWorkers(workerCount);
 
+    // Step 1: Group workers by hostname
+    for (const auto &worker : workerList) {
+        hostToWorkers[worker.hostname].push_back(worker);
+    }
+
+    // Step 2: Convert hostnames to vector for indexing
+    std::vector<std::string> uniqueHosts;
+    for (const auto &entry : hostToWorkers) {
+        uniqueHosts.push_back(entry.first);
+    }
+
+    std::vector<std::string> partitionWorkerMapping;
+
+    int hostCount = uniqueHosts.size();
+
+    for (int partitionId = 0; partitionId < numberOfPartitions; partitionId++) {
+
+        // Step 3: Round robin over hosts
+        std::string selectedHost = uniqueHosts[partitionId % hostCount];
+
+        // Step 4: Pick a worker inside that host
+        auto &workersOnHost = hostToWorkers[selectedHost];
+
+        // If multiple workers per machine, rotate among them
+        const auto &worker =
+            workersOnHost[(partitionId / hostCount) % workersOnHost.size()];
+
+        // Insert mapping
+        std::string insertMapping =
+            "INSERT INTO worker_has_partition "
+            "(worker_idworker, partition_idpartition, partition_graph_idgraph) "
+            "VALUES (" + std::to_string(worker.workerId) + ", " +
+            std::to_string(partitionId) + ", " + graphId + ");";
+
+        sqlite->runInsert(insertMapping);
+
+        partitionWorkerMapping.push_back(
+            worker.hostname + ":" +
+            std::to_string(worker.port) + ":" +
+            std::to_string(worker.dataPort)
+        );
+
+        kg_pipeline_stream_handler_logger.info(
+            "Assigned Partition " + std::to_string(partitionId) +
+            " to Host " + worker.hostname +
+            " Worker ID " + std::to_string(worker.workerId)
+        );
+    }
+
+    // --- convert to comma-separated string ---
+    std::string workersParitionMapping;
+    for (size_t i = 0; i < partitionWorkerMapping.size(); i++) {
+        workersParitionMapping += partitionWorkerMapping[i];
+        if (i < partitionWorkerMapping.size() - 1) {
+            workersParitionMapping += ",";
+        }
+    }
+    std::unordered_map<std::string, int> workerCountMap;
+    // Now workersParitionMapping can be sent to the worker
+    kg_pipeline_stream_handler_logger.info("Partition-to-worker mapping: " + workersParitionMapping);
     // First pass: count occurrences of each worker (hostname + port)
     for (const auto &worker : workerList) {
         std::string key = worker.hostname + ":" +
@@ -1251,6 +1362,10 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
         return false;
     }
     if (!sendAndExpect(workers, "ok")) {
+        close(sockfd);
+        return false;
+    }
+    if (!sendAndExpect(workersParitionMapping, "ok")) {
         close(sockfd);
         return false;
     }

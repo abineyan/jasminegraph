@@ -334,6 +334,7 @@ void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {
             pthread_cond_signal(&embeddingQueueCond);
         }
     } catch (const std::exception&  e) {
+        incremental_localstore_logger.error("error while processing edge data: " + edge);
         incremental_localstore_logger.error(e.what());
     }
 }

@@ -16,7 +16,8 @@ limitations under the License.
 #include "../server/JasmineGraphInstanceProtocol.h"
 #include "../util/Utils.h"
 #include "../util/logger/Logger.h"
-
+#include <signal.h>
+#include <sys/wait.h>
 using namespace std;
 Logger file_service_logger;
 pthread_mutex_t thread_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -84,30 +85,44 @@ void JasmineGraphInstanceFileTransferService::run(int dataPort) {
         return;
     }
     int connFd;
-    listen(listenFd, 10);
+    listen(listenFd, 1024);
+
+    signal(SIGCHLD, SIG_IGN);
+
     file_service_logger.info("Worker FileTransfer Service listening on port " + to_string(dataPort));
 
-    len = sizeof(clntAdd);
-
     while (true) {
+        len = sizeof(clntAdd);
+
         connFd = accept(listenFd, (struct sockaddr *)&clntAdd, &len);
 
         if (connFd < 0) {
-            file_service_logger.info("Cannot accept connection to port " + to_string(dataPort));
+            file_service_logger.error(
+                "Accept failed on port " + to_string(dataPort) +
+                " error: " + strerror(errno)
+            );
             continue;
         }
-        file_service_logger.info("Connection successful to port " + to_string(dataPort));
 
         pid_t pid = fork();
+
+        if (pid < 0) {
+            perror("fork failed");
+            close(connFd);
+            continue;
+        }
+
         if (pid == 0) {
             close(listenFd);
+
             filetransferservicesessionargs *sessionargs = new filetransferservicesessionargs;
             sessionargs->connFd = connFd;
             filetransferservicesession(sessionargs);
-            break;
+
+            close(connFd);
+            exit(0);
         } else {
             close(connFd);
         }
     }
-    exit(0);
 }
