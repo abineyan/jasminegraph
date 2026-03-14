@@ -75,7 +75,8 @@ static int getDataPortByHost(const std::string &host);
 static size_t getWorkerCount();
 
 static std::vector<JasmineGraphServer::worker> hostWorkerList;
-
+static std::atomic<size_t> globalWorkerIndex(0);
+static std::mutex workerSelectionMutex;
 static unordered_map<string, pair<int, int>> hostPortMap;
 std::unordered_map<int, int> aggregateWeightMap;
 
@@ -911,56 +912,83 @@ JasmineGraphServer::worker JasmineGraphServer::getDesignatedWorker() {
 
     return best_worker;
 }
+std::vector<JasmineGraphServer::worker>
+JasmineGraphServer::getWorkers(size_t npart) {
 
-std::vector<JasmineGraphServer::worker> JasmineGraphServer::getWorkers(size_t npart) {
-    // TODO: get the workers with lowest load from workerList
-    std::vector<JasmineGraphServer::worker> *workerListAll;
-    unordered_map<string, float> cpu_loads;
+    std::vector<JasmineGraphServer::worker>* workerListAll;
+
     if (jasminegraph_profile == PROFILE_K8S) {
-        std::unique_ptr<K8sInterface> k8sInterface(new K8sInterface());
-        if (k8sInterface->getJasmineGraphConfig("scale_on_adgr") != "true") {
-            return K8sWorkerController::workerList;
-        }
         workerListAll = &(K8sWorkerController::workerList);
-        cpu_loads = scaleK8s(npart);
     } else {
         workerListAll = &hostWorkerList;
-
-
-        const map<string, string> cpu_map = Utils::getMetricMap("cpu_usage");
-        // Convert strings to float
-        unordered_map<string, float> cpu_loads;
-        for (auto it = cpu_map.begin(); it != cpu_map.end(); it++) {
-            cpu_loads[it->first] = std::stof(it->second);
-            server_logger.debug(std::to_string(cpu_loads[it->first]) +" : " + std::to_string(cpu_loads[it->second]));
-        }
-
-        for (auto it = hostWorkerList.begin(); it != hostWorkerList.end(); it++) {
-            auto &worker = *it;
-            string workerHostPort = worker.hostname + ":" + to_string(worker.port);
-            cpu_loads[workerHostPort] = 0.;
-        }
     }
-    size_t len = workerListAll->size();
+
     std::vector<JasmineGraphServer::worker> workerList;
-    for (int i = 0; i < npart; i++) {
-        JasmineGraphServer::worker worker_min;
-        float cpu_min = 100.;
-        for (auto it = (*workerListAll).begin(); it != (*workerListAll).end(); it++) {
-            auto &worker = *it;
-            string workerHostPort = worker.hostname + ":" + to_string(worker.port);
-            float cpu = cpu_loads[workerHostPort];
-            if (cpu < cpu_min) {
-                worker_min = worker;
-                cpu_min = cpu;
-            }
-        }
-        string workerHostPort = worker_min.hostname + ":" + to_string(worker_min.port);
-        cpu_loads[workerHostPort] += 0.25;  // 0.25 = 1/nproc
-        workerList.push_back(worker_min);
+
+    if (workerListAll->empty()) {
+        return workerList;
     }
+
+    size_t workerCount = workerListAll->size();
+
+    std::lock_guard<std::mutex> lock(workerSelectionMutex);
+
+    for (size_t i = 0; i < npart; i++) {
+        size_t index = globalWorkerIndex++ % workerCount;
+        workerList.push_back((*workerListAll)[index]);
+    }
+
     return workerList;
 }
+// std::vector<JasmineGraphServer::worker> JasmineGraphServer::getWorkers(size_t npart) {
+//     // TODO: get the workers with lowest load from workerList
+//     std::vector<JasmineGraphServer::worker> *workerListAll;
+//     unordered_map<string, float> cpu_loads;
+//     if (jasminegraph_profile == PROFILE_K8S) {
+//         std::unique_ptr<K8sInterface> k8sInterface(new K8sInterface());
+//         if (k8sInterface->getJasmineGraphConfig("scale_on_adgr") != "true") {
+//             return K8sWorkerController::workerList;
+//         }
+//         workerListAll = &(K8sWorkerController::workerList);
+//         cpu_loads = scaleK8s(npart);
+//     } else {
+//         workerListAll = &hostWorkerList;
+//
+//
+//         const map<string, string> cpu_map = Utils::getMetricMap("cpu_usage");
+//         // Convert strings to float
+//         unordered_map<string, float> cpu_loads;
+//         for (auto it = cpu_map.begin(); it != cpu_map.end(); it++) {
+//             cpu_loads[it->first] = std::stof(it->second);
+//             server_logger.debug(std::to_string(cpu_loads[it->first]) +" : " + std::to_string(cpu_loads[it->second]));
+//         }
+//
+//         for (auto it = hostWorkerList.begin(); it != hostWorkerList.end(); it++) {
+//             auto &worker = *it;
+//             string workerHostPort = worker.hostname + ":" + to_string(worker.port);
+//             cpu_loads[workerHostPort] = 0.;
+//         }
+//     }
+//     size_t len = workerListAll->size();
+//     std::vector<JasmineGraphServer::worker> workerList;
+//     for (int i = 0; i < npart; i++) {
+//         JasmineGraphServer::worker worker_min;
+//         float cpu_min = 100.;
+//         for (auto it = (*workerListAll).begin(); it != (*workerListAll).end(); it++) {
+//             auto &worker = *it;
+//             string workerHostPort = worker.hostname + ":" + to_string(worker.port);
+//             float cpu = cpu_loads[workerHostPort];
+//             if (cpu < cpu_min) {
+//                 worker_min = worker;
+//                 cpu_min = cpu;
+//             }
+//         }
+//         string workerHostPort = worker_min.hostname + ":" + to_string(worker_min.port);
+//         cpu_loads[workerHostPort] += 0.25;  // 0.25 = 1/nproc
+//         workerList.push_back(worker_min);
+//     }
+//     return workerList;
+// }
 
 std::vector<JasmineGraphServer::worker> JasmineGraphServer::workers(size_t npart) {
     return getWorkers(npart);

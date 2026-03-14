@@ -64,34 +64,45 @@ HDFSMultiThreadedHashPartitioner::~HDFSMultiThreadedHashPartitioner() {
 }
 
 void HDFSMultiThreadedHashPartitioner::addLocalEdge(const std::string &edge, int index) {
-    if (index < numberOfPartitions) {
-        hash_partitioner_logger.debug("Adding local edge, accuquring lock");
-        std::unique_lock<std::mutex> lock(localEdgeMutexes[index]);
-        localEdgeArrays[index].push_back(edge);
-        if (localEdgeArrays[index].size() >= partitionFileEdgeThreshold) {
-            hash_partitioner_logger.debug("Adding local edge, releaseing lock");
-            // edgeReady[index] = true;
-                   lock.unlock();
-            edgeAvailableCV[index].notify_one();
-            hash_partitioner_logger.debug("Adding local edge, nofiyying consumer");
+    try {
+        if (index < numberOfPartitions) {
+            hash_partitioner_logger.debug("Adding local edge, accuquring lock");
+            std::unique_lock<std::mutex> lock(localEdgeMutexes[index]);
+            localEdgeArrays[index].push_back(edge);
+            if (localEdgeArrays[index].size() >= partitionFileEdgeThreshold) {
+                hash_partitioner_logger.debug("Adding local edge, releaseing lock");
+                // edgeReady[index] = true;
+                lock.unlock();
+                edgeAvailableCV[index].notify_all();
+                hash_partitioner_logger.debug("Adding local edge, nofiyying consumer");
+            }
+        } else {
+            hash_partitioner_logger.error(
+                "Invalid partition index : " + std::to_string(index) +
+                " in addLocalEdge. Total number of partitions : " + std::to_string(numberOfPartitions));
         }
-    } else {
-        hash_partitioner_logger.error(
-            "Invalid partition index : " + std::to_string(index) +
-            " in addLocalEdge. Total number of partitions : " + std::to_string(numberOfPartitions));
+    } catch (exception &e) {
+        hash_partitioner_logger.error("Error while adding local edge in hash partitioner");
+        hash_partitioner_logger.error(e.what());
     }
 }
 
 void HDFSMultiThreadedHashPartitioner::addEdgeCut(const std::string &edge, int index) {
-    if (index < numberOfPartitions) {
-        std::lock_guard<std::mutex> lock(edgeCutsMutexes[index]);
-        edgeCutsArrays[index].push_back(edge);
-        edgeCutsReady[index] = true;
-        edgeCutsAvailableCV[index].notify_one();
-    } else {
-        hash_partitioner_logger.error("Invalid partition index : "
-        + std::to_string(index) + " in addEdgeCut. Total number of partitions : "
-        + std::to_string(numberOfPartitions));
+    try {
+        if (index < numberOfPartitions) {
+            std::lock_guard<std::mutex> lock(edgeCutsMutexes[index]);
+            edgeCutsArrays[index].push_back(edge);
+            edgeCutsReady[index] = true;
+            edgeCutsAvailableCV[index].notify_one();
+        } else {
+            hash_partitioner_logger.error("Invalid partition index : "
+            + std::to_string(index) + " in addEdgeCut. Total number of partitions : "
+            + std::to_string(numberOfPartitions));
+        }
+    }  catch (exception& e) {
+        hash_partitioner_logger.error("Error while adding edge cuts by hash partitioner");
+        hash_partitioner_logger.error(e.what());
+
     }
 }
 
@@ -119,120 +130,130 @@ void HDFSMultiThreadedHashPartitioner::stopConsumerThreads() {
 }
 
 void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, JasmineGraphServer::worker worker) {
-    int threadEdgeCount = 0;
-    int fileIndex = 0;
-    std::ofstream partitionFile;
-    string fileName =
-            std::to_string(graphId) + "_" + std::to_string(partitionIndex) + "_localstore_" + std::to_string(fileIndex);
-    string filePath =
-            this->outputFilePath + "/" + fileName;
+    try {
+        int threadEdgeCount = 0;
+        int fileIndex = 0;
+        std::ofstream partitionFile;
+        string fileName =
+                std::to_string(graphId) + "_" + std::to_string(partitionIndex) + "_localstore_" + std::to_string(fileIndex);
+        string filePath =
+                this->outputFilePath + "/" + fileName;
 
-    // Open the first partition file initially
-    partitionFile.open(filePath);
-    if (!partitionFile.is_open()) {
-        hash_partitioner_logger.error("Error opening file for partition " + std::to_string(partitionIndex));
-        return;
-    }
-
-    while (true) {
-         std::vector<std::string> batch;
-        {
-            std::unique_lock<std::mutex> lock(localEdgeMutexes[partitionIndex]);
-             // Wait until there are edges available or the thread is signaled to terminate
-             edgeAvailableCV[partitionIndex].wait(lock, [this, partitionIndex] {
-                 return !localEdgeArrays[partitionIndex].empty()  || terminateConsumers;
-             });
-
-             hash_partitioner_logger.debug("ADDING edge, bathcing");
-             batch.swap(localEdgeArrays[partitionIndex]);
-             lock.unlock();
-             // edgeReady[partitionIndex] = false;
+        // Open the first partition file initially
+        partitionFile.open(filePath);
+        if (!partitionFile.is_open()) {
+            hash_partitioner_logger.error("Error opening file for partition " + std::to_string(partitionIndex));
+            return;
         }
 
+        while (true) {
+            std::vector<std::string> batch;
+            {
+                std::unique_lock<std::mutex> lock(localEdgeMutexes[partitionIndex]);
+                // Wait until there are edges available or the thread is signaled to terminate
+                edgeAvailableCV[partitionIndex].wait(lock, [this, partitionIndex] {
+                    return !localEdgeArrays[partitionIndex].empty()  || terminateConsumers;
+                });
 
-        // Process the edges from the local array
-        while (!batch.empty()) {
-            // hash_partitioner_logger.debug("Processing non empty");
-            std::string edge = batch.back();
-            batch.pop_back();
+                hash_partitioner_logger.debug("ADDING edge, bathcing");
+                batch.swap(localEdgeArrays[partitionIndex]);
 
-            // Write the edge to the current partition file
-            partitionFile << edge << std::endl;
-            threadEdgeCount++;
+                lock.unlock();
+                // edgeReady[partitionIndex] = false;
+            }
 
-            // Check if the edge count has reached the threshold
-            if (threadEdgeCount >= this->partitionFileEdgeThreshold) {
-                threadEdgeCount = 0;
-                partitionFile.close();  // Close the file after reaching the threshold
 
-                hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
-                                                           " generated file of " +
-                                                           std::to_string(this->partitionFileEdgeThreshold) +
-                                                           " edges: " + filePath);
+            // Process the edges from the local array
+            while (!batch.empty()) {
+                // hash_partitioner_logger.debug("Processing non empty");
+                std::string edge = batch.back();
+                batch.pop_back();
 
-                partitionMutexArray[partitionIndex].lock();
+                // Write the edge to the current partition file
+                partitionFile << edge << std::endl;
+                threadEdgeCount++;
+
+                // Check if the edge count has reached the threshold
+                if (threadEdgeCount >= this->partitionFileEdgeThreshold) {
+                    threadEdgeCount = 0;
+                    partitionFile.close();  // Close the file after reaching the threshold
+
+                    hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
+                                                               " generated file of " +
+                                                               std::to_string(this->partitionFileEdgeThreshold) +
+                                                               " edges: " + filePath);
+
+                    partitionMutexArray[partitionIndex].lock();
                     Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
                         masterIp, JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START,
                                                  this->isEmbedGraph);
-                partitionMutexArray[partitionIndex].unlock();
-
-                hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
-                                              " sent file of " +
-                                              std::to_string(this->partitionFileEdgeThreshold) +
-                                              " edges: " + filePath);
-
-                // Increment file index and open the next file
-                fileIndex++;
-                fileName = std::to_string(graphId) + "_" + std::to_string(partitionIndex) + "_localstore_" +
-                           std::to_string(fileIndex);
-                filePath = this->outputFilePath + "/" + fileName;
-                partitionFile.open(filePath);
-                if (!partitionFile.is_open()) {
-                    hash_partitioner_logger.error("Error opening file for partition " + std::to_string(partitionIndex));
-                    break;
-                }
-            }
-
-            auto jsonEdge = json::parse(edge);
-            string sourceId = std::string(jsonEdge["source"]["id"]);
-            string destinationId = std::string(jsonEdge["destination"]["id"]);
-            {
-                std::lock_guard<std::mutex> partitionLock(partitionLocks[partitionIndex]);
-                partitions[partitionIndex]->addEdge({sourceId, destinationId}, isDirected);
-            }
-        }
-
-        // If the consumer is terminating, close the file and break out of the loop
-        if (terminateConsumers) {
-            if (partitionFile.is_open()) {
-                partitionFile.close();
-                if (threadEdgeCount !=0) {
-                    hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
-                                                  " generated file of " +
-                                                  std::to_string(threadEdgeCount) +
-                                                  " edges: " + filePath);
-                    partitionMutexArray[partitionIndex].lock();
-                    hash_partitioner_logger.debug("Partition " + std::to_string(partitionIndex) +
-                        "acquired Lock");
-                    Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
-                        masterIp,
-                                                 JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START,
-                                                 this->isEmbedGraph);
                     partitionMutexArray[partitionIndex].unlock();
+
+                    hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
+                                                  " sent file of " +
+                                                  std::to_string(this->partitionFileEdgeThreshold) +
+                                                  " edges: " + filePath);
+
+                    // Increment file index and open the next file
+                    fileIndex++;
+                    fileName = std::to_string(graphId) + "_" + std::to_string(partitionIndex) + "_localstore_" +
+                               std::to_string(fileIndex);
+                    filePath = this->outputFilePath + "/" + fileName;
+                    partitionFile.open(filePath);
+                    if (!partitionFile.is_open()) {
+                        hash_partitioner_logger.error("Error opening file for partition " + std::to_string(partitionIndex));
+                        break;
+                    }
+                }
+
+                auto jsonEdge = json::parse(edge);
+                string sourceId = std::string(jsonEdge["source"]["id"]);
+                string destinationId = std::string(jsonEdge["destination"]["id"]);
+                {
+                    std::lock_guard<std::mutex> partitionLock(partitionLocks[partitionIndex]);
+                    partitions[partitionIndex]->addEdge({sourceId, destinationId}, isDirected);
                 }
             }
-            break;
+
+            // If the consumer is terminating, close the file and break out of the loop
+            if (terminateConsumers) {
+                if (partitionFile.is_open()) {
+                    partitionFile.close();
+                    if (threadEdgeCount !=0) {
+                        hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
+                                                      " generated file of " +
+                                                      std::to_string(threadEdgeCount) +
+                                                      " edges: " + filePath);
+                        partitionMutexArray[partitionIndex].lock();
+                        hash_partitioner_logger.debug("Partition " + std::to_string(partitionIndex) +
+                            "acquired Lock");
+                        Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
+                            masterIp,
+                                                     JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START,
+                                                     this->isEmbedGraph);
+                        partitionMutexArray[partitionIndex].unlock();
+                    }
+                }
+                break;
+            }
         }
+
+        // Ensure the file is closed if it remains open
+        if (partitionFile.is_open()) {
+            partitionFile.close();
+        }
+        hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) + " finished processing.");
+    } catch (exception& e) {
+        hash_partitioner_logger.error("Error while sending consuming local edges by hash partitioner");
+        hash_partitioner_logger.error(e.what());
     }
 
-    // Ensure the file is closed if it remains open
-    if (partitionFile.is_open()) {
-        partitionFile.close();
-    }
-    hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) + " finished processing.");
 }
 
 void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, JasmineGraphServer::worker worker) {
+
+    try {
+
     int threadEdgeCount = 0;
     int fileIndex = 0;
     std::ofstream edgeCutsFile;
@@ -343,6 +364,10 @@ void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, Jasmi
         edgeCutsFile.close();
     }
     hash_partitioner_logger.debug("Central edge consumer " + std::to_string(partitionIndex) + " finished processing.");
+    } catch (exception& e) {
+        hash_partitioner_logger.error("Error while sending consuming edge cuts by hash partitioner");
+        hash_partitioner_logger.error(e.what());
+    }
 }
 
 void HDFSMultiThreadedHashPartitioner::updatePartitionTable() {

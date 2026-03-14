@@ -24,7 +24,9 @@ create table graph
     hdfs_port                   INTEGER,
     hdfs_host                   VARCHAR(200),
     uploaded_bytes  BIGINT DEFAULT 0,
-    file_size_bytes BIGINT DEFAULT 0
+    file_size_bytes BIGINT DEFAULT 0,
+    nextEdgeIndex BIGINT DEFAULT 0,
+    nextNodeIndex BIGINT DEFAULT 0
 );
 
 create index index_idgraph

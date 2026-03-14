@@ -15,7 +15,7 @@ limitations under the License.
 #include "../../../../server/JasmineGraphServer.h"
 
 Logger semantic_beam_search_logger_executor;
-
+std::mutex resultsMutex;
 SemanticBeamSearchExecutor::SemanticBeamSearchExecutor() {}
 
 SemanticBeamSearchExecutor::SemanticBeamSearchExecutor(
@@ -71,11 +71,14 @@ void SemanticBeamSearchExecutor::execute() {
 
         int partitionId = std::stoi(row[0].second);
         JasmineGraphServer::worker w;
-
+        auto it = workerByIP.find(row[1].second);
+        if (it != workerByIP.end()) {
+             w = it->second;
+        } else {
             w.hostname = row[1].second;
             w.port = std::stoi(row[2].second);
             w.dataPort = std::stoi(row[3].second);
-
+        }
         partitionWorkerMap[partitionId] = w;
         semantic_beam_search_logger_executor.info(w.hostname);
         semantic_beam_search_logger_executor.info(to_string(w.port));
@@ -108,6 +111,7 @@ void SemanticBeamSearchExecutor::execute() {
     }
     std::vector<std::thread> readThreads;
     int count = 0;
+    chrono::system_clock::time_point startTime = std::chrono::high_resolution_clock::now();
 
     std::vector<std::thread> workerThreads;
     count = 0;
@@ -132,7 +136,11 @@ void SemanticBeamSearchExecutor::execute() {
         if (data == "-1") {
           break;
         }
-        results.push_back(json::parse(data));
+
+          {
+           std::lock_guard<std::mutex> lock(resultsMutex);
+           results.push_back(json::parse(data));
+       }
       } });
     }
     for (auto& t : readThreads) {
@@ -169,11 +177,15 @@ void SemanticBeamSearchExecutor::execute() {
             break;
         }
     }
+    chrono::system_clock::time_point endTime = std::chrono::high_resolution_clock::now();
+   ;
     semantic_beam_search_logger_executor.info(
-        "###CYPHER-QUERY-EXECUTOR### Executing Query : Fetching Results");
+    "###SBS-QUERY-EXECUTOR### Executing Query : Executed in (ms)" + to_string(
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+     endTime - startTime).count()));
 
     semantic_beam_search_logger_executor.info(
-        "###CYPHER-QUERY-EXECUTOR### Executing Query : Completed");
+        "###SBS-QUERY-EXECUTOR### Executing Query : Completed");
 
     workerResponded = true;
     JobResponse jobResponse;

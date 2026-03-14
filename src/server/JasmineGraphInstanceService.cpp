@@ -372,7 +372,7 @@ void JasmineGraphInstanceService::run(string masterHost, string host, int server
         return;
     }
 
-    listen(listenFd, 1024);
+    listen(listenFd, 10240);
 
     len = sizeof(clntAdd);
 
@@ -3165,6 +3165,8 @@ static void streaming_kg_construction(
     instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::OK);
 
     long startFromBytes;
+    long nextNodeIndex;
+    long nextEdgeIndex;
     if (isResume == "y") {
         startFromBytes = std::stol(Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH));
         instance_logger.info("Received uploadedBytes: " + std::to_string(startFromBytes));
@@ -3174,8 +3176,29 @@ static void streaming_kg_construction(
             return;
         }
         instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::OK);
+
+
+        nextNodeIndex = std::stol(Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH));
+        instance_logger.info("Received nextNodeIndex: " + std::to_string(nextNodeIndex));
+
+        if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
+            *loop_exit_p = true;
+            return;
+        }
+        instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::OK);
+
+        nextEdgeIndex = std::stol(Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH));
+        instance_logger.info("Received uploadedBytes: " + std::to_string(nextEdgeIndex));
+
+        if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
+            *loop_exit_p = true;
+            return;
+        }
+        instance_logger.info("Sent : " + JasmineGraphInstanceProtocol::OK);
     } else {
         startFromBytes = 0;
+        nextEdgeIndex = 0;
+        nextNodeIndex = 0;
     }
 
     string llm_runner = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
@@ -3361,7 +3384,7 @@ static void streaming_kg_construction(
         new Pipeline(connFd, hdfsConnector->getFileSystem(), hdfsPath, noOfPartitions, std::stoi(graphID), masterIP,
                      workers, workersPartitionMapping, llmRunnerSockets, llm_inference_engine, llm, chunkSize,
                      chunksPerBatch,
-                     startFromBytes);
+                     startFromBytes, nextNodeIndex, nextEdgeIndex);
     instance_logger.info("Started listening to " + hdfsPath);
 
     streamHandler->init();
@@ -3802,7 +3825,7 @@ if (tuple_id > 0) {
 }     ScopedTracer tupleSpan(
                             "average_tuple_generation_time",
                             {
-                                {"time", to_string(averageTimePerTupleMs)}
+                                {"time(ms)", to_string(averageTimePerTupleMs)}
                             });
        //      chunkTrace.addAttributes({
        // {"tuple_count", std::to_string(tuple_id)},
@@ -5185,6 +5208,8 @@ static void query_start_command(int connFd, InstanceHandler& instanceHandler,
 static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
                                  std::map<std::string, JasmineGraphIncrementalLocalStore*>& incrementalLocalStoreMap,
                                  bool* loop_exit_p) {
+    auto sbsStartTime = std::chrono::high_resolution_clock::now();
+
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::QUERY_START_ACK)) {
         *loop_exit_p = true;
         return;
@@ -5246,9 +5271,10 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
 
     std::thread perfThread = std::thread(&PerformanceUtil::collectPerformanceStatistics);
     perfThread.detach();
+    auto indexLoadingStartTime = std::chrono::high_resolution_clock::now();
 
     JasmineGraphIncrementalLocalStore* incrementalLocalStoreInstance;
-    string graphIdentifier = "g" + graphId + "_p" + partition;
+    string graphIdentifier = "g" + graphId + "_" + partition;
     if (incrementalLocalStoreMap.find(graphIdentifier) == incrementalLocalStoreMap.end()) {
         incrementalLocalStoreInstance =
             JasmineGraphInstanceService::loadStreamingStore(graphId, partition, incrementalLocalStoreMap, "app", true);
@@ -5271,7 +5297,11 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
         incrementalLocalStoreInstance->nm->nextNodeIndex = nextNodeIndex;
         incrementalLocalStoreInstance->nm->nextEdgeIndex = nextEdgeIndex;
     }
-
+    auto indexLoadingEndTime = std::chrono::high_resolution_clock::now();
+    long duration =std::chrono::duration_cast<std::chrono::milliseconds>(
+          indexLoadingEndTime - indexLoadingStartTime).count();
+    instance_logger.info("[SBS] SBS in worker   (ms) to load index: " +
+           to_string(duration));
     content_length = 0;
     instance_logger.info("Waiting for content length");
     return_status = recv(connFd, &content_length, sizeof(int), 0);
@@ -5348,34 +5378,46 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
                              ", Data Port: " + std::to_string(worker.dataPort));
     }
 
+    auto userQueryEmbeddingStartTime = std::chrono::high_resolution_clock::now();
+
+    auto userQueryEmbedding = incrementalLocalStoreInstance->textEmbedder->embed(message);
+
+    auto userQueryEmbeddingEndTime = std::chrono::high_resolution_clock::now();
+     duration =std::chrono::duration_cast<std::chrono::milliseconds>(
+          userQueryEmbeddingEndTime - userQueryEmbeddingStartTime).count();
+    instance_logger.info("[SBS] SBS in worker   (ms) to Embed user query : " +
+           to_string(duration));
     SemanticBeamSearch* semanticBeamSearch = new SemanticBeamSearch(
         incrementalLocalStoreInstance->faissNodeStore, incrementalLocalStoreInstance->faissEdgeStore,
-        incrementalLocalStoreInstance->textEmbedder, incrementalLocalStoreInstance->textEmbedder->embed(message), 7,
+        incrementalLocalStoreInstance->textEmbedder, userQueryEmbedding, 7,
         incrementalLocalStoreInstance->gc, workers, incrementalLocalStoreInstance->nm);
     // semanticBeamSearch->getSeedNodes();
     SharedBuffer shared(50);
-    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15);
-    auto startTime = std::chrono::high_resolution_clock::now();
-    int time = 0;
+    auto sbsTraversalStartTime = std::chrono::high_resolution_clock::now();
 
+    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15);
     while (true) {
         string raw = shared.get();
         instance_logger.debug("raw: " + raw);
         if (raw == "-1") {
             instanceHandler.dataPublishToMaster(connFd, loop_exit_p, raw);
-            instance_logger.info("Total time taken for query execution: " + std::to_string(time) + " ms");
             break;
         }
-        auto endTime = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-        time += duration.count();
         instanceHandler.dataPublishToMaster(connFd, loop_exit_p, raw);
-        startTime = std::chrono::high_resolution_clock::now();
     }
+    auto sbsTraversalEndTime = std::chrono::high_resolution_clock::now();
+    duration =std::chrono::duration_cast<std::chrono::milliseconds>(
+           sbsTraversalEndTime - sbsTraversalStartTime).count();
+    instance_logger.info("[SBS] SBS in worker took (ms) for sbs traversal: " +
+           to_string(duration));
     delete NodeBlock::nodesDB;
     instance_logger.debug("Sent CRLF string to mark the end");
     *loop_exit_p = true;
-
+    auto sbsEndTime = std::chrono::high_resolution_clock::now();
+      duration =std::chrono::duration_cast<std::chrono::milliseconds>(
+         sbsEndTime - sbsStartTime).count();
+    instance_logger.info("[SBS] SBS in worker took (ms): " +
+           to_string(duration));
     close(connFd);
 }
 
@@ -6090,9 +6132,9 @@ static void processFile(string fileName, bool isLocal, InstanceStreamHandler& ha
          (double) totalFileTimeMs / tripleCount;
     }
     ScopedTracer tupleSpan(
-                             "average_tuple_persitancetime",
+                             "average_tuple_persistence_time",
                              {
-                                 {"time", to_string(averageTimePerTupleMs)}
+                                 {"time(ms)", to_string(averageTimePerTupleMs)}
                              });
     delete NodeBlock::nodesDB;
     file.close();
