@@ -36,6 +36,7 @@ using json = nlohmann::json;
 using namespace std;
 using namespace std::chrono;
 std::mutex partitionerMutex;
+
 Logger kg_pipeline_stream_handler_logger;
 
 const size_t MESSAGE_SIZE = 5 * 1024 * 1024;
@@ -514,7 +515,7 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::shared_ptr<
                             graph["edgecount"] = partitions.getEdgeCount();
                             graph["centralpartitioncount"] = this->numberOfPartitions;
                             graph["graph_status_idgraph_status"] = Conts::GRAPH_STATUS::OPERATIONAL;
-                            graph["nextNodeIndex"] = nextNodeIndex;
+                            graph["nextNodeIndex"] = nextNodeIndex.load();
             graph["nextEdgeIndex"] = nextEdgeIndex;
                             meta["graph"] = graph;
                             meta["partitions"] = partitions.getPartitionsMeta();
@@ -721,7 +722,7 @@ if (tripleCount % 10) {
     graph["edgecount"] = partitions.getEdgeCount();
     graph["centralpartitioncount"] = this->numberOfPartitions;
     graph["graph_status_idgraph_status"] = Conts::GRAPH_STATUS::OPERATIONAL;
-    graph["nextNodeIndex"] = nextNodeIndex;
+    graph["nextNodeIndex"] = nextNodeIndex.load();
     graph["nextEdgeIndex"] = nextEdgeIndex;
 
     meta["graph"] = graph;
@@ -1101,6 +1102,23 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                         kg_pipeline_stream_handler_logger.debug("951");
 
                         sharedBuffer->add(tuple);
+                        json chunkref =  {
+                            {"source",
+                             {{"id", subject_id},
+                              {"properties",
+                               {{"id", subject_id},
+                                {"label", subject_type},
+                                {"name", subject}}}}},
+                            {"destination",
+                             {{"id", object_id},
+                              {"properties",
+                               {{"id", object_id},
+                                {"label", object_type},
+                                {"name", object}}}}},
+                            {"properties",
+                             {{"id", edge_id},
+                              {"type", predicate}}}};
+
                         kg_pipeline_stream_handler_logger.debug("954");
                     } catch (exception& e) {
                         kg_pipeline_stream_handler_logger.error("Unexpected Error occured");

@@ -121,11 +121,13 @@ class Pipeline {
     std::unordered_map<std::string, long> nodeIndex;
     std::unordered_map<std::string, long> edgeIndex;
 
-    unsigned int nextNodeIndex = 0;
+        std::atomic<long> nextNodeIndex{0};
+    // unsigned int nextNodeIndex = 0;
     unsigned int nextEdgeIndex = 0;
     std::mutex entityResolutionMutex;
 
     string currentTraceContext;
+
 
     std::atomic<bool> metaThreadRunning{true};
     // std::atomic<bool> stopFlag{false};

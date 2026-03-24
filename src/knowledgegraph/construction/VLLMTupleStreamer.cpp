@@ -14,6 +14,7 @@ limitations under the License.
 
 #include <curl/curl.h>
 
+#include <boost/tuple/detail/tuple_basic.hpp>
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -158,7 +159,9 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
                                         // vllm_tuple_streamer_logger.debug(
                                         //     "✅ Added formatted triple: " + formattedTriple.dump());
                                     }
-                                } catch (const std::exception& ex) {
+                                }
+
+                                catch (const std::exception& ex) {
                                     vllm_tuple_streamer_logger.warn(
                                         "❌ JSON array parse failed: " + std::string(ex.what()) + ". Invalid Tuple: " + std::string
                                         (ctx->current_tuple));
