@@ -140,6 +140,7 @@ class Conts {
         static const std::string VALIDATE_ITER;
         static const std::string EPOCHS;
         static const std::string MODEL_ID;
+        static const std::string APPEND_MODE;
     };
 
     struct SLA_CATEGORY {
