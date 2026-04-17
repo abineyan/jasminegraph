@@ -1892,7 +1892,6 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     close(sockfd);
     return false;
   }
-    
   util_logger.debug("semantic beam search" + workerListString);
   length = htonl(workerListString.size());
   util_logger.debug("Sending workers length: " +
