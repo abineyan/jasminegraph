@@ -248,7 +248,7 @@ void* instanceservicesession(void* dummyPt) {
             page_rank_command(connFd, serverPort, *graphDBMapCentralStores, &loop_exit);
         } else if (cmd.compare(JasmineGraphInstanceProtocol::WORKER_PAGE_RANK_DISTRIBUTION) == 0) {
             worker_page_rank_distribution_command(connFd, serverPort, *graphDBMapCentralStores, &loop_exit);
-        } else if (cmd.compare(JasmineGraphInstanceProtocol::EGONET) == 0) {
+        } else if (cmd.compare(JasmineGraphInstanceProtocol::EGO_NET) == 0) {
             egonet_command(connFd, serverPort, *graphDBMapCentralStores, &loop_exit);
         } else if (cmd.compare(JasmineGraphInstanceProtocol::WORKER_EGO_NET) == 0) {
             worker_egonet_command(connFd, serverPort, *graphDBMapCentralStores, &loop_exit);
