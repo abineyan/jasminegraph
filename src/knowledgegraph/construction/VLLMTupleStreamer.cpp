@@ -157,13 +157,13 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
 
                                         ctx->buffer->add(formattedTriple.dump());
                                         // vllm_tuple_streamer_logger.debug(
-                                        //     "✅ Added formatted triple: " + formattedTriple.dump());
+                                        //     "? Added formatted triple: " + formattedTriple.dump());
                                     }
                                 }
 
                                 catch (const std::exception& ex) {
                                     vllm_tuple_streamer_logger.warn(
-                                        "❌ JSON array parse failed: " + std::string(ex.what()) + ". Invalid Tuple: " + std::string
+                                        "? JSON array parse failed: " + std::string(ex.what()) + ". Invalid Tuple: " + std::string
                                         (ctx->current_tuple));
                                     vllm_tuple_streamer_logger.warn(
                                            "Invalid tuple  detected. Retrying entire chunk.");

@@ -158,8 +158,8 @@ void SemanticBeamSearchExecutor::execute() {
     std::sort(results.begin(), results.end(), [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
     // trim to top k
-    if ((int)results.size() > Conts::TOP_RELEVANT_INFORMATION_COUNT )
-        results.resize(Conts::TOP_RELEVANT_INFORMATION_COUNT );
+    if ((int)results.size() > Conts::TOP_RELEVANT_INFORMATION_COUNT)
+        results.resize(Conts::TOP_RELEVANT_INFORMATION_COUNT);
 
     // write to socket
     count = 0;

@@ -1187,7 +1187,7 @@ bool Utils::uploadFileToWorker(std::string host, int port, int dataPort, int gra
         return false;
     }
 
-    util_logger.debug("Going to send file" + filePath + "/" + fileName + "through file transfer service to worker");
+    util_logger.debug("Going to send file" + filePath + "/" + fileName + " through file transfer service to worker");
     Utils::sendFileThroughService(host, dataPort, fileName, filePath);
 
     string response;
@@ -1919,6 +1919,7 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     close(sockfd);
     return false;
   }
+    
   util_logger.debug("semantic beam search" + workerListString);
   length = htonl(workerListString.size());
   util_logger.debug("Sending workers length: " +
@@ -1953,6 +1954,7 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
           "Error while receiving start command: " + start2_msg);
       break;
     }
+
     send(sockfd, JasmineGraphInstanceProtocol::QUERY_DATA_ACK.c_str(),
          JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
 

@@ -1022,7 +1022,7 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
 
                         int tuple_length = ntohl(tuple_length_net);
 
-                        // ✅ Sanity checks
+                        // ? Sanity checks
                         if (tuple_length <= 0 || tuple_length > 10 * 1024 * 1024) {
                             // limit to 10MB
                             kg_pipeline_stream_handler_logger.error("Invalid tuple length: " + std::to_string(tuple_length));

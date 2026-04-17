@@ -1,5 +1,5 @@
 /**
-Copyright 2025 JasmineGraph Team
+Copyright 2026 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -62,28 +62,28 @@ json Responder::generateResponse(const std::string& query, const json& execution
                          std::string("\n\nFinal Answer:");
 
     responder_logger.debug("Responder Prompt: " + prompt);
-    const int maxRetries = 3;
-    const int baseDelaySeconds = 2;
+
     int attempt = 0;
     std::string llmResponse;
 
-    while (attempt < maxRetries) {
+    while (attempt < Conts::LLM_MAX_TRY) {
         llmResponse = LLMUtils::callLLM(prompt, host, model, engine);
         if (!llmResponse.empty())
             break;
 
         responder_logger.info("Retrying LLM response generation in " +
-                              std::to_string(baseDelaySeconds * (attempt + 1)) + " seconds...");
+                              std::to_string(Conts::LLM_RETRY_SLEEP_TIME_S * (++attempt)) + " seconds...");
 
-        std::this_thread::sleep_for(std::chrono::seconds(baseDelaySeconds * (attempt + 1)));
-        attempt++;
+        std::this_thread::sleep_for(std::chrono::seconds(Conts::LLM_RETRY_SLEEP_TIME_S * (attempt)));
     }
 
     if (llmResponse.empty()) {
-        responder_logger.error("LLM failed to generate a response after " + std::to_string(maxRetries) + " attempts");
+        responder_logger.error("LLM failed to generate a response after " + std::to_string(Conts::LLM_MAX_TRY)
+                                + " attempts");
 
         llmResponse = "I'm sorry, I couldn't generate a response at this time.";
     }
 
     return {{"query", query}, {"answer", llmResponse}};
 }
+

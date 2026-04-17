@@ -3349,7 +3349,7 @@ static void streaming_kg_construction(
         bool isNumber = !lastPart.empty() && std::all_of(lastPart.begin(), lastPart.end(), ::isdigit);
 
         if (!isNumber) {
-            continue;  // No count → skip
+            continue;  // No count ? skip
         }
 
         int count = std::stoi(lastPart);
@@ -3567,7 +3567,7 @@ static void streaming_kg_construction_local(int connFd, bool* loop_exit_p) {
         bool isNumber = !lastPart.empty() && std::all_of(lastPart.begin(), lastPart.end(), ::isdigit);
 
         if (!isNumber) {
-            continue;  // No count → skip
+            continue;  // No count ? skip
         }
 
         int count = std::stoi(lastPart);
