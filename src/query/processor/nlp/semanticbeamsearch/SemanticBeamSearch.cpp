@@ -339,9 +339,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
           semantic_beam_search_logger.debug("Expanded path JSON: " +
                                             newPath.dump());
             semantic_beam_search_logger.debug(to_string(newHopTraces[0].hop));
-
-
-            // visitedNodes.insert(nodeData["id"].get<std::string>());
             visitedRelations.insert(relData["id"].get<std::string>());
             if (lastNode->addr == relation->source.address) {
                 relation =  relation->nextLocalSource();
@@ -367,7 +364,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
             if (lastNode->addr == relation->source.address) {
                 expandedNode =  relation->getDestination();
                 direction = "right";
-
             } else {
                 expandedNode = relation->getSource();
             }
@@ -378,7 +374,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
                 if (lastNode->addr == relation->source.address) {
                     relation =  relation->nextLocalSource();
                     direction = "right";
-
                 } else {
                     relation =  relation->nextLocalDestination();
                     direction = "left";

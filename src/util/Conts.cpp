@@ -103,8 +103,11 @@ const std::string Conts::PARAM_KEYS::LOOP_EXIT_POINTER = "loopExitPointer";
 const std::string Conts::PARAM_KEYS::CYPHER_QUERY::QUERY_STRING = "queryString";
 
 const std::string Conts::FLAGS::MODEL_ID = "model_id";
+const std::string Conts::FLAGS::APPEND_MODE = "app";
 
 
 
 const int Conts::HDFS::EDGE_SEPARATION_LAYER_THREAD_COUNT = 20;
 const int Conts::NUMBER_OF_PARTITION_DATA = 7;
+const int Conts::TOP_RELEVANT_INFORMATION_COUNT = 50;
+

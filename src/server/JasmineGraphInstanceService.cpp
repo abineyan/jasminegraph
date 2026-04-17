@@ -3081,7 +3081,7 @@ static void streaming_triangles_command(
 
     if (incrementalLocalStoreMap.find(graphIdentifier) == incrementalLocalStoreMap.end()) {
         incrementalLocalStoreInstance = JasmineGraphInstanceService::loadStreamingStore(
-            graphID, partitionId, incrementalLocalStoreMap, "app", false);
+            graphID, partitionId, incrementalLocalStoreMap, Conts::FLAGS::APPEND_MODE, false);
     } else {
         incrementalLocalStoreInstance = incrementalLocalStoreMap[graphIdentifier];
     }
@@ -3274,7 +3274,6 @@ static void streaming_kg_construction(
         *loop_exit_p = true;
         return;
     }
-    // Parse workerIP:port:replicationCount (comma separated)
     string workersIP = Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
 
     instance_logger.info("Received Worker IP: " + workersIP);
@@ -5468,7 +5467,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
     agentRequestCtx.graphId = graphId;
 
     std::string planStr = AgentProtocol::getPlan(agentRequestCtx);
-    instance_logger.info("Executing Agent Plan" + planStr);
+    instance_logger.info("Executing Agent Plan:" + planStr);
 
     json jsonPlan = json::parse(planStr);
     DecodedPlan decodedPlan = PlanDecoder::decode(jsonPlan);

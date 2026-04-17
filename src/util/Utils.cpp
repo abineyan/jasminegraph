@@ -1372,9 +1372,6 @@ bool Utils::sendFileChunkToWorker(std::string host, int port, int dataPort, std:
 
             if (response.compare(JasmineGraphInstanceProtocol::FILE_RECV_WAIT) == 0) {
                 util_logger.debug("Received: " + JasmineGraphInstanceProtocol::FILE_RECV_WAIT);
-                // sleep(1);
-                // std::this_thread::sleep_for(std::chrono::milliseconds(3000)); // small wait
-
                 continue;
             } else if (response.compare(JasmineGraphInstanceProtocol::FILE_ACK) == 0) {
                 util_logger.debug("Received: " + JasmineGraphInstanceProtocol::FILE_ACK);
@@ -1387,15 +1384,6 @@ bool Utils::sendFileChunkToWorker(std::string host, int port, int dataPort, std:
 
             }
         }
-
-        // if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-        //     JasmineGraphInstanceProtocol::HDFS_FILE_CHUNK_END_CHK,
-        //                                JasmineGraphInstanceProtocol::HDFS_FILE_CHUNK_END_ACK)) {
-        //     Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-        //     close(sockfd);
-        //     return false;
-        // }
-
         Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
         close(sockfd);
         Utils::deleteFile(filePath);
@@ -1632,14 +1620,7 @@ bool Utils::sendQueryPlanToWorker(const std::string& host, int port, const std::
     if (Utils::connect_wrapper(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         return false;
     }
-
-    // if (!Utils::performHandshake(sockfd, data, FED_DATA_LENGTH, masterIP)) {
-    //     Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-    //     close(sockfd);
-    //     return false;
-    // }
-
-    if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
+        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
                                    JasmineGraphInstanceProtocol::QUERY_START,
                                    JasmineGraphInstanceProtocol::QUERY_START_ACK)) {
         Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
@@ -1919,7 +1900,7 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
   util_logger.debug("Received ACK after partitionId");
 
   // --- Step 4: Send query ---
-  util_logger.debug("semantic beam searcg" + query);
+  util_logger.debug("semantic beam search: " + query);
   length = htonl(query.size());
   util_logger.debug("Sending query length: " +
                                              std::to_string(ntohl(length)));
@@ -1938,23 +1919,6 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     close(sockfd);
     return false;
   }
-
-  // int counter = 0;
-  // string workers = "";
-  // // --- Step 4: Send workers ---
-  // for (JasmineGraphServer::worker worker :
-  //      JasmineGraphServer::getWorkers(noOfPartitions)) {
-  //   counter++;
-  //   util_logger.debug("count " +
-  //                                             std::to_string(counter));
-  //   workers += worker.hostname + ":" + std::to_string(worker.port) + ":" +
-  //              std::to_string(worker.dataPort);
-  //   // append , only if not last
-  //   if (counter < noOfPartitions) {
-  //     workers += ",";
-  //   }
-  // }
-
   util_logger.debug("semantic beam search" + workerListString);
   length = htonl(workerListString.size());
   util_logger.debug("Sending workers length: " +
@@ -1978,15 +1942,6 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     util_logger.debug(ack);
 
   util_logger.debug("Received ACK after query ");
-
-
-  // char start[ACK_MESSAGE_SIZE] = {0};
-  // recv(sockfd, &start, sizeof(start), 0);
-  // std::string start_msg(start);
-  // char ack2[ACK_MESSAGE_SIZE] = {0};
-  // recv(sockfd, &ack2, sizeof(start), 0);
-  // std::string ack2_msg(ack2);
-  // util_logger.debug(start_msg);
   util_logger.debug(
       "Semantic Beam Search request sent successfully");
   while (true) {
@@ -1998,11 +1953,6 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
           "Error while receiving start command: " + start2_msg);
       break;
     }
-
-
-
-
-
     send(sockfd, JasmineGraphInstanceProtocol::QUERY_DATA_ACK.c_str(),
          JasmineGraphInstanceProtocol::QUERY_DATA_ACK.length(), 0);
 
@@ -2459,7 +2409,7 @@ bool Utils::sendDataFromWorkerToWorker(string masterIP, int graphID, string part
     }
     auto now = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime);
-    util_logger.debug(" Time Taken: " + std::to_string(elapsed.count()) + " seconds");
+    util_logger.debug("Time Taken: " + std::to_string(elapsed.count()) + " seconds");
     return true;
 }
 
@@ -2542,7 +2492,7 @@ std::vector<std::string> Utils::getUniqueLLMRunners(const std::string& hostnameP
             // Make sure this colon is AFTER the scheme (not the one in https://)
             if (lastColon != std::string::npos && lastColon > token.find("://") + 2) {
                 token = token.substr(0, lastColon);
-                util_logger.info("HTTPS rule applied, stripped to: " + token);
+                util_logger.debug("HTTPS rule applied, stripped to: " + token);
             }
         } else {
             // ===== Count colons ignoring the scheme =====
@@ -2554,7 +2504,7 @@ std::vector<std::string> Utils::getUniqueLLMRunners(const std::string& hostnameP
                 if (token[i] == ':')
                     ++colonCount;
             }
-            util_logger.info("ColonCount: " + std::to_string(colonCount));
+            util_logger.debug("ColonCount: " + std::to_string(colonCount));
             // ===== Apply your rules =====
             if (colonCount == 2) {
                 // Remove rightmost colon and part after it
@@ -2562,7 +2512,6 @@ std::vector<std::string> Utils::getUniqueLLMRunners(const std::string& hostnameP
                 if (lastColon != std::string::npos) {
                     token = token.substr(0, lastColon);
                 }
-                util_logger.info("ColonCount 3");
             }
         }
         util_logger.info("Token: " + token);

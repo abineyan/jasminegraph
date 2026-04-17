@@ -59,6 +59,7 @@ class Conts {
     std::string JASMINEGRAPH_SERVER_PROPS_FILE = "conf/acacia-server.properties";
     std::string JASMINEGRAPH_SERVER_PUBLIC_HOSTS_FILE = "machines_public.txt";
     std::string JASMINEGRAPH_SERVER_PRIVATE_HOSTS_FILE = "machines.txt";
+    static const int TOP_RELEVANT_INFORMATION_COUNT;
     static std::string JASMINEGRAPH_EXECUTABLE;
     static std::string JASMINEGRAPH_HOME;
     static std::string GRAPH_TYPE_RDF;
@@ -132,6 +133,7 @@ class Conts {
         static const std::string VALIDATE_ITER;
         static const std::string EPOCHS;
         static const std::string MODEL_ID;
+        static const std::string APPEND_MODE;
     };
 
     struct SLA_CATEGORY {

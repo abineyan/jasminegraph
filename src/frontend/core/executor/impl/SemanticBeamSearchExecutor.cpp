@@ -114,7 +114,6 @@ void SemanticBeamSearchExecutor::execute() {
     chrono::system_clock::time_point startTime = std::chrono::high_resolution_clock::now();
 
     std::vector<std::thread> workerThreads;
-    count = 0;
     for (int i = 0; i < numberOfPartitions; ++i) {
         JasmineGraphServer::worker worker= partitionWorkerMap[i];
         workerThreads.emplace_back(doSemanticBeamSearch, worker.hostname,
@@ -159,9 +158,8 @@ void SemanticBeamSearchExecutor::execute() {
     std::sort(results.begin(), results.end(), [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
     // trim to top k
-    int k = 50;
-    if ((int)results.size() > k)
-        results.resize(k);
+    if ((int)results.size() > Conts::TOP_RELEVANT_INFORMATION_COUNT )
+        results.resize(Conts::TOP_RELEVANT_INFORMATION_COUNT );
 
     // write to socket
     count = 0;

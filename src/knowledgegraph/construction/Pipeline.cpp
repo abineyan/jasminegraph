@@ -499,7 +499,7 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::shared_ptr<
         sqlite);
     std::hash<std::string> hasher;
     std::vector<std::thread> tupleThreads;
-    std::thread metaThread([&]() {
+    std::thread metaDataThread([&]() {
     using namespace std::chrono;
 
     auto nextTick = steady_clock::now();
@@ -707,8 +707,8 @@ if (tripleCount % 10) {
 
     metaThreadRunning.store(false, std::memory_order_relaxed);
 
-    if (metaThread.joinable()) {
-        metaThread.join();
+    if (metaDataThread.joinable()) {
+        metaDataThread.join();
     }
     auto endTime = high_resolution_clock::now();
     std::chrono::duration<double> duration = endTime - startTime;
@@ -822,7 +822,7 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                 close(sockfd);
                 return;
                                            }
-            kg_pipeline_stream_handler_logger.debug("LLM runner sent successfully");
+            kg_pipeline_stream_handler_logger.debug("LLM runner information sent");
 
             // 3. Send LLM  info
             if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llm, JasmineGraphInstanceProtocol::OK)) {
@@ -919,11 +919,11 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                     break;
                                                }
 
-                char ack3[ACK_MESSAGE_SIZE] = {0};
+                char chunkLengthBuffer[ACK_MESSAGE_SIZE] = {0};
                 int converted_number = htonl(chunk.length());
                 kg_pipeline_stream_handler_logger.debug("Sending chunk length: " +
                     std::to_string(chunk.length()));
-                if (!Utils::sendIntExpectResponse(sockfd, ack3,
+                if (!Utils::sendIntExpectResponse(sockfd, chunkLengthBuffer,
                                                   JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
                                                   converted_number,
                                                   JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
@@ -943,11 +943,11 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                 Utils::expect_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
 
 
-                char ack4[ACK_MESSAGE_SIZE] = {0};
+                char contextTraceContextBuffer[ACK_MESSAGE_SIZE] = {0};
                 converted_number = htonl(currentTraceContext.length());
                 kg_pipeline_stream_handler_logger.debug("Sending currentTraceContext length: " + std::to_string
                     (currentTraceContext.length()));
-                if (!Utils::sendIntExpectResponse(sockfd, ack3,
+                if (!Utils::sendIntExpectResponse(sockfd, chunkLengthBuffer,
                                                   JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
                                                   converted_number,
                                                   JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
@@ -1102,22 +1102,6 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                         kg_pipeline_stream_handler_logger.debug("951");
 
                         sharedBuffer->add(tuple);
-                        json chunkref =  {
-                            {"source",
-                             {{"id", subject_id},
-                              {"properties",
-                               {{"id", subject_id},
-                                {"label", subject_type},
-                                {"name", subject}}}}},
-                            {"destination",
-                             {{"id", object_id},
-                              {"properties",
-                               {{"id", object_id},
-                                {"label", object_type},
-                                {"name", object}}}}},
-                            {"properties",
-                             {{"id", edge_id},
-                              {"type", predicate}}}};
 
                         kg_pipeline_stream_handler_logger.debug("954");
                     } catch (exception& e) {
