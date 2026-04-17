@@ -315,22 +315,28 @@ NodeBlock *NodeManager::addNode(std::string nodeId) {
 }
 
 RelationBlock *NodeManager::addLocalEdge(std::pair<std::string, std::string> edge) {
-    pthread_mutex_lock(&lockEdgeAdd);
+    try {
+        pthread_mutex_lock(&lockEdgeAdd);
 
-    NodeBlock *sourceNode = this->addNode(edge.first);
-    NodeBlock *destNode = this->addNode(edge.second);
-    RelationBlock *newRelation = this->addLocalRelation(*sourceNode, *destNode);
-    if (newRelation) {
-        newRelation->setDestination(destNode);
-        newRelation->setSource(sourceNode);
-        this->nextEdgeIndex++;
+        NodeBlock *sourceNode = this->addNode(edge.first);
+        NodeBlock *destNode = this->addNode(edge.second);
+        RelationBlock *newRelation = this->addLocalRelation(*sourceNode, *destNode);
+        if (newRelation) {
+            newRelation->setDestination(destNode);
+            newRelation->setSource(sourceNode);
+            this->nextEdgeIndex++;
+        }
+
+        pthread_mutex_unlock(&lockEdgeAdd);
+
+        node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
+        " Destination DB block address " + std::to_string(destNode->addr));
+        return newRelation;
+    } catch (exception &e) {
+        node_manager_logger.error("Error while adding the new edge/relation for source ");
+        return nullptr;
     }
 
-    pthread_mutex_unlock(&lockEdgeAdd);
-
-    node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
-                              " Destination DB block address " + std::to_string(destNode->addr));
-    return newRelation;
 }
 
 RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> edge) {
@@ -354,24 +360,51 @@ RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> e
     return newRelation;
 }
 
-void NodeManager::addNodeIndex(std::string nodeId, unsigned int nodeIndex) {
-    this->nodeIndex.insert({nodeId, this->nextNodeIndex});
 
-    std::ofstream index_db(indexDBPath, std::ios::app | std::ios::binary);
+
+void NodeManager::addNodeIndex(std::string nodeId, unsigned int nodeIndex) {
+    // Update in-memory map
+    this->nodeIndex[nodeId] = this->nextNodeIndex;
+
+    // Compute file offset
+    std::streampos offset = static_cast<std::streampos>(this->nextNodeIndex) *
+                            (NodeManager::INDEX_KEY_SIZE + sizeof(unsigned int));
+
+    std::fstream index_db(indexDBPath, std::ios::in | std::ios::out | std::ios::binary);
     if (index_db.is_open()) {
-        char nodeIDC[NodeManager::INDEX_KEY_SIZE] = {0};  // Initialize with null chars
-        std::strcpy(nodeIDC, nodeId.c_str());
+        // Seek to the correct position
+        index_db.seekp(offset);
+        if (!index_db) {
+            node_manager_logger.error("Failed to seek to offset " + std::to_string(offset));
+            index_db.close();
+            return;
+        }
+
+        // Prepare key buffer
+        char nodeIDC[NodeManager::INDEX_KEY_SIZE] = {0};
+        std::strncpy(nodeIDC, nodeId.c_str(), NodeManager::INDEX_KEY_SIZE - 1);
+
+        // Write record
         index_db.write(nodeIDC, sizeof(nodeIDC));
         index_db.write(reinterpret_cast<char *>(&nodeIndex), sizeof(unsigned int));
+
+        // Ensure flush to OS buffer
         index_db.flush();
+
+        // Optional: fsync for crash safety
+        // int fd = fileno(index_db.rdbuf()->fd());
+        // if (fd != -1) {
+        //     fsync(fd);  // ensures data reaches disk
+        // }
+
         node_manager_logger.debug("Writing node index --> Node key = " +
                                   std::string(nodeIDC) + ", value = " + std::to_string(nodeIndex));
     } else {
         node_manager_logger.error("Failed to open index database file.");
     }
+
     index_db.close();
 }
-
 int NodeManager::dbSize(std::string path) {
     /*
         The structure stat contains at least the following members:

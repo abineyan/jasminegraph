@@ -45,6 +45,10 @@ void SharedBuffer::clear() {
     cv.notify_all();  // wake up any waiting threads
 }
 
+unsigned long SharedBuffer::size () {
+    return buffer.size();
+}
+
 std::optional<std::string> SharedBuffer::getWithTimeout(int timeoutSeconds) {
     std::unique_lock<std::mutex> lock(mtx);
     if (cv.wait_for(lock, std::chrono::seconds(timeoutSeconds), [this]() { return !buffer.empty(); })) {

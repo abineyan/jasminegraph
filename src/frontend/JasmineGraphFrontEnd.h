@@ -36,6 +36,7 @@ limitations under the License.
 #include <thread>
 
 #include "../metadb/SQLiteDBInterface.h"
+#include "../nativestore/DataPublisher.h"
 #include "../performancedb/PerformanceSQLiteDBInterface.h"
 #include "../query/algorithms/triangles/Triangles.h"
 #include "core/scheduler/JobScheduler.h"
@@ -63,6 +64,9 @@ class JasmineGraphFrontEnd {
                                              SQLiteDBInterface *sqlite, bool *loop_exit_p);
     static bool constructKGStreamLocalTXTCommand(std::string masterIP, int connFd, int numberOfPartitions,
                                           SQLiteDBInterface *sqlite, bool *loop_exit_p);
+        static void agent_plan_command(std::string masterIP, int connFd,
+                                   int numberOfPartitions, bool* loop_exit, SQLiteDBInterface* sqlite,
+                                   PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler);
     static void stop_graph_streaming(int connFd, SQLiteDBInterface *sqlite, bool *loop_exit_p);
     static bool strian_exit;
     std::map<std::string, std::atomic<bool>> *streamsState;

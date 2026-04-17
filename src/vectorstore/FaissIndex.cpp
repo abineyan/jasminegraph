@@ -49,24 +49,13 @@ FaissIndex::FaissIndex(int embeddingDim, const std::string& filepath)
   load(filepath);
 }
 
-FaissIndex::~FaissIndex() {
-  try {
-    faiss_index_logger.info("saving FAISS index from destructor");
-    save(filePath);
-  } catch (const std::exception& e) {
-    faiss_index_logger.error("[FaissIndex] Failed to auto-save index: " +
-                             std::string(e.what()));
-  }
-  delete index;
-}
-
 faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
                              std::string nodeId) {
   if (embedding.size() != dim) {
     throw std::runtime_error("Embedding dimension mismatch!");
   }
     try {
-        std::unique_lock<std::mutex> lock(mtx);
+        std::lock_guard<std::mutex> lock(mtx);
 
         faiss::idx_t new_id = index->ntotal;
         faiss_index_logger.debug("[FaissIndex] Adding new embedding with nodeId: " +
@@ -78,19 +67,10 @@ faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
             "[FaissIndex] Embedding added to index. Updating nodeEmbeddingMap.");
         nodeIdToEmbeddingIdMap[nodeId] = new_id;
         embeddingIdToNodeIdMap[new_id] = nodeId;
-
-        // if (index->ntotal % 1000 == 0) {
-        //     lock.unlock();
-        //     faiss_index_logger.info("saving faiss index periodically");
-        //     save(filePath);
-        //     faiss_index_logger.info("saved faiss index periodically");
-        //
-        // }
-        lock.unlock();
         return new_id;
     } catch (const std::exception& e) {
-       // faiss_index_logger.error(std::string("Failed to reconstruct embedding for ID ") + nodeId + ": " +
-       //     e.what());
+       faiss_index_logger.error(std::string("Failed to reconstruct embedding for ID ") + nodeId + ": " +
+           e.what());
         throw std::runtime_error("Failed to reconstruct embedding for ID " + nodeId);
     }
 }
@@ -113,7 +93,7 @@ std::vector<std::pair<faiss::idx_t, float>> FaissIndex::search(
 }
 
 void FaissIndex::save(const std::string& filepath) {
-  std::lock_guard<std::mutex> lock(mtx);
+  std::lock_guard<std::mutex> lock(fileMtx);
 
   // Save FAISS index
   faiss::write_index(index, filepath.c_str());
@@ -140,30 +120,8 @@ void FaissIndex::save(const std::string& filepath) {
 
 void FaissIndex::save() {
     try {
-    std::lock_guard<std::mutex> lock(mtx);
+        save(filePath);
 
-    // Save FAISS index
-    faiss::write_index(index, filePath.c_str());
-        faiss_index_logger.info("[FaissIndex] Saved index");
-
-    // Save mapping alongside index (e.g., filepath + ".map")
-    std::ofstream mapFile(filePath + ".map", std::ios::binary);
-    if (!mapFile.is_open()) {
-        throw std::runtime_error("Failed to open map file for saving.");
-    }
-
-    size_t size = nodeIdToEmbeddingIdMap.size();
-    mapFile.write(reinterpret_cast<const char*>(&size), sizeof(size));
-
-    for (const auto& entry : nodeIdToEmbeddingIdMap) {
-        size_t keyLen = entry.first.size();
-        mapFile.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
-        mapFile.write(entry.first.data(), keyLen);
-        mapFile.write(reinterpret_cast<const char*>(&entry.second),
-                      sizeof(entry.second));
-    }
-
-    mapFile.close();
 } catch (const std::exception& e) {
     faiss_index_logger.error(std::string("Failed to save index: ") + e.what());
 }
@@ -185,22 +143,6 @@ void FaissIndex::load(const std::string& filepath) {
       throw std::runtime_error("Loaded FAISS index is not L2 Flat index.");
     }
   } else {
-    // Create a new index if file not found
-      // int nlist = 100000;         // number of clusters (IVF)
-      // int m = 64;                 // PQ number of sub-vectors
-      // int nbits = 8;              // 8-bit quantization
-      //
-      // faiss::IndexFlatL2 quantizer(dim);
-      //
-      // faiss::IndexIVFPQ* index = new faiss::IndexIVFPQ(
-      //     &quantizer,
-      //     dim,
-      //     nlist,     // IVF clusters
-      //     m,         // number of PQ subvectors
-      //     nbits      // bits per subvector
-      // );
-      // index->use_precomputed_table = 1;
-      // index->train(num_train_vectors, train_data);
     index = new faiss::IndexFlatL2(dim);
   }
 
