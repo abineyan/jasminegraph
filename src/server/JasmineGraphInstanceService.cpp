@@ -3265,7 +3265,6 @@ static void streaming_kg_construction(
     *loop_exit_p = true;
     return;
   }
-    // Parse workerIP:port:replicationCount (comma separated)
     string workersIP =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
 
@@ -3495,7 +3494,6 @@ static void streaming_kg_construction_local(
     *loop_exit_p = true;
     return;
   }
-    // Parse workerIP:port:replicationCount (comma separated)
     string workersIP =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
 
@@ -5277,7 +5275,7 @@ static void semantic_beam_search(
       incrementalLocalStoreMap.end()) {
     incrementalLocalStoreInstance =
         JasmineGraphInstanceService::loadStreamingStore(
-            graphId, partition, incrementalLocalStoreMap, "app", true);
+            graphId, partition, incrementalLocalStoreMap, Conts::FLAGS::APPEND_MODE, true);
   } else {
     incrementalLocalStoreInstance = incrementalLocalStoreMap[graphIdentifier];
        std::unordered_map<std::string, unsigned int> nodeIndex = incrementalLocalStoreInstance->nm->nodeIndex;
