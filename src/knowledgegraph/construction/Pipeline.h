@@ -36,6 +36,15 @@ class Pipeline {
              std::string masterIP, vector<JasmineGraphServer::worker>& workerList, std::vector<std::string> llmRunners,
              std::string llmInferenceEngine, std::string llm, string chunkSize, std::string chunksPerBatch,
              long startFromBytes);
+    Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
+             std::string masterIP, vector<JasmineGraphServer::worker>& workerList, std::string workersPartitionMapping,
+             std::vector<std::string> llmRunners, std::string llmInferenceEngine, std::string llm,
+             std::string chunkSize, std::string chunksPerBatch, long startFromBytes);
+    Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
+             std::string masterIP, vector<JasmineGraphServer::worker>& workerList, std::string workersPartitionMapping,
+             std::vector<std::string> llmRunners, std::string llmInferenceEngine, std::string llm,
+             std::string chunkSize, std::string chunksPerBatch, long startFromBytes, long nextNodeIndex,
+             long nextEdgeIndex);
     Pipeline(int connFd,
                const std::string& filePath,
                int numberOfPartitions,
@@ -73,9 +82,9 @@ class Pipeline {
     void streamFromLocalFileIntoBuffer();
     void streamChunckToWorker(const std::string& chunk, int partitionId);
     void startStreamingFromBufferToWorkers();
-    json processTupleAndSaveInPartition(const std::vector<std::unique_ptr<SharedBuffer>>& tupleBuffer);
-    void extractTuples(std::string host, int port, std::string masterIP, int graphID, int partitionId,
-    std::queue<Chunk>& dataBuffer, SharedBuffer& sharedBuffer);
+    json processTupleAndSaveInPartition(const vector<shared_ptr<SharedBuffer>>& tupleBuffer);
+    void extractTuples(string host, int port, string masterIP, int graphID, int partitionId, queue<Chunk>& dataBuffer,
+                       shared_ptr<SharedBuffer> sharedBuffer);
 
     hdfsFS fileSystem;
 
@@ -112,14 +121,18 @@ class Pipeline {
     std::unordered_map<std::string, long> nodeIndex;
     std::unordered_map<std::string, long> edgeIndex;
 
-    unsigned int nextNodeIndex = 0;
+        std::atomic<long> nextNodeIndex{0};
+    // unsigned int nextNodeIndex = 0;
     unsigned int nextEdgeIndex = 0;
     std::mutex entityResolutionMutex;
 
     string currentTraceContext;
+
+
     std::atomic<bool> metaThreadRunning{true};
     std::atomic<long> vertexCount{0};
     std::atomic<long> edgeCount{0};
+    string workersPartitionMapping;
 };
 
 #endif  // JASMINEGRAPH_HDFSPIPELINE_H

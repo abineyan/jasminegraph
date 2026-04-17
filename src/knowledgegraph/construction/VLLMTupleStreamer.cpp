@@ -14,6 +14,7 @@ limitations under the License.
 
 #include <curl/curl.h>
 
+#include <boost/tuple/detail/tuple_basic.hpp>
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -30,275 +31,307 @@ VLLMTupleStreamer::VLLMTupleStreamer(const std::string& modelName,
                                      const std::string& host)
     : model(modelName), host(host) {
   curl_global_init(CURL_GLOBAL_DEFAULT);
-  vllm_tuple_streamer_logger.debug("Initialized VLLMTupleStreamer with model: " +
-                                  modelName + ", host: " + host);
+  // vllm_tuple_streamer_logger.debug("Initialized VLLMTupleStreamer with model: " +
+                                  // modelName + ", host: " + host);
 }
 
 // ---------------- Stream Callback ----------------
 size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
                                          void* userdata) {
-  size_t totalSize = size * nmemb;
-  StreamContext* ctx = static_cast<StreamContext*>(userdata);
-
-  std::string incoming(ptr, totalSize);
-  size_t start = 0;
-  while (start < incoming.size()) {
-    size_t pos = incoming.find("\n", start);
-    if (pos == std::string::npos) pos = incoming.size();
-    std::string line = incoming.substr(start, pos - start);
-    start = pos + 1;
-
-    if (line.empty()) continue;
-
-    // End of stream
-    if (line == "data: [DONE]") {
-        ctx->isSuccess = true;
-      if (!ctx->current_tuple.empty()) {
-        ctx->buffer->add(ctx->current_tuple);
-        ctx->current_tuple.clear();
-      }
-        if (!ctx->retryChunk) {
-            ctx->buffer->add("-1");  // Signal end
-        }
-      break;
-    }
-
-    // Only process lines starting with "data: "
-    const std::string prefix = "data: ";
-    if (line.rfind(prefix, 0) != 0) continue;
-
-    std::string jsonPart = line.substr(prefix.size());
     try {
-      auto jsonLine = json::parse(jsonPart);
-      if (jsonLine.contains("choices") && !jsonLine["choices"].empty()) {
-        std::string partial = jsonLine["choices"][0]["delta"].value("content", "");
+        size_t totalSize = size * nmemb;
+        StreamContext* ctx = static_cast<StreamContext*>(userdata);
 
-        size_t i = 0;
-        while (i < partial.size()) {
-          size_t bpos = partial.find_first_of("[]", i);
-          if (bpos == std::string::npos) {
-            if (ctx->braceDepth >= 2) {
-              ctx->current_tuple.append(partial, i, std::string::npos);
-            }
-            break;
-          }
-          if (ctx->braceDepth >= 2) {
-            ctx->current_tuple.append(partial, i, bpos - i);
-          }
+        std::string incoming(ptr, totalSize);
+        size_t start = 0;
+        while (start < incoming.size()) {
+            size_t pos = incoming.find("\n", start);
+            if (pos == std::string::npos) pos = incoming.size();
+            std::string line = incoming.substr(start, pos - start);
+            start = pos + 1;
 
-          char c = partial[bpos];
-          if (c == '[') {
-            ctx->braceDepth++;
-            if (ctx->braceDepth >= 2) ctx->current_tuple.push_back(c);
-          } else {
-            // ']'
-            ctx->braceDepth--;
-            ctx->current_tuple.push_back(c);
+            if (line.empty()) continue;
 
-            if (ctx->braceDepth == 1) {
-              vllm_tuple_streamer_logger.debug("Current tuple: " +
-                                              ctx->current_tuple);
-              try {
-                auto tuple = json::parse(ctx->current_tuple);
-
-                  if (!tuple.is_array() || tuple.size() < 5) {
-                      vllm_tuple_streamer_logger.warn(
-                          "Invalid tuple size detected. Retrying entire chunk.");
-
-                      ctx->isSuccess = false;
-                      ctx->retryChunk = true;
-                      ctx->retryReason = "Tuple size less than 5. Tuple size should be 5 or more.";
-                        return 0;   // IMMEDIATE ABORT of curl_easy_perform
-                  }
-
-                if (tuple.is_array()) {
-                  std::string subject = tuple[0].get<std::string>();
-                  std::string predicate = tuple[1].get<std::string>();
-                  std::string object = tuple[2].get<std::string>();
-                  std::string subject_type = tuple[3].get<std::string>();
-                  std::string object_type = tuple[4].get<std::string>();
-
-
-
-                  std::string subject_id =
-                      Utils::canonicalize(subject);
-                  std::string object_id =
-                      Utils::canonicalize(object);
-                  std::string edge_id = Utils::canonicalize(
-                      subject_id + "_" + predicate + "_" + object_id);
-
-                  json formattedTriple = {
-                      {"source",
-                       {{"id", subject_id},
-                        {"properties",
-                         {{"id", subject_id},
-                          {"label", subject_type},
-                          {"name", subject}}}}},
-                      {"destination",
-                       {{"id", object_id},
-                        {"properties",
-                         {{"id", object_id},
-                          {"label", object_type},
-                          {"name", object}}}}},
-                      {"properties",
-                       {{"id", edge_id},
-                        {"type", predicate}}}};
-
-                    if (tuple.size() == Conts::TUPLE_SIZE_WITH_ONLY_WHEN_FIELD) {
-                        formattedTriple["properties"]["when"] = tuple[5].get<std::string>();
-                    }
-
-                    if (tuple.size() == Conts::TUPLE_SIZE_WITH_WHEN_AND_WHERE_FIELD) {
-                        formattedTriple["properties"]["when"] = tuple[5].get<std::string>();
-                        formattedTriple["properties"]["where"] = tuple[6].get<std::string>();
-                    }
-
-                  ctx->buffer->add(formattedTriple.dump());
-                  vllm_tuple_streamer_logger.debug(
-                      "✅ Added formatted tuple: " + formattedTriple.dump());
+            // End of stream
+            if (line == "data: [DONE]") {
+                ctx->isSuccess = true;
+                if (!ctx->current_tuple.empty()) {
+                    ctx->buffer->add(ctx->current_tuple);
+                    ctx->current_tuple.clear();
                 }
-              } catch (const std::exception& ex) {
-                vllm_tuple_streamer_logger.warn(
-                    "❌ JSON array parse failed: " + std::string(ex.what()) + ". Invalid Tuple: " + std::string
-                    (ctx->current_tuple));
-                  vllm_tuple_streamer_logger.warn(
-                         "Invalid tuple  detected. Retrying entire chunk.");
-
-                  ctx->isSuccess = false;
-                  ctx->retryChunk = true;
-                  ctx->retryReason =  std::string(ex.what());
-                  return 0;   // IMMEDIATE ABORT of curl_easy_perform
-              }
-              ctx->current_tuple.clear();
+                // if (!ctx->retryChunk) {
+                ctx->buffer->add("-1");  // Signal end
+                // }
+                break;
             }
-          }
-          i = bpos + 1;
-        }
-      }
-    } catch (const std::exception& ex) {
-      vllm_tuple_streamer_logger.warn("JSON parse error: " +
-                                       std::string(ex.what()));
-    }
-  }
 
-  return totalSize;
+            // Only process lines starting with "data: "
+            const std::string prefix = "data: ";
+            if (line.rfind(prefix, 0) != 0) continue;
+
+            std::string jsonPart = line.substr(prefix.size());
+            try {
+                auto jsonLine = json::parse(jsonPart);
+                if (jsonLine.contains("choices") && !jsonLine["choices"].empty()) {
+                    std::string partial = jsonLine["choices"][0]["delta"].value("content", "");
+
+                    size_t i = 0;
+                    while (i < partial.size()) {
+                        size_t bpos = partial.find_first_of("[]", i);
+                        if (bpos == std::string::npos) {
+                            if (ctx->braceDepth >= 2) {
+                                ctx->current_tuple.append(partial, i, std::string::npos);
+                            }
+                            break;
+                        }
+                        if (ctx->braceDepth >= 2) {
+                            ctx->current_tuple.append(partial, i, bpos - i);
+                        }
+
+                        char c = partial[bpos];
+                        if (c == '[') {
+                            ctx->braceDepth++;
+                            if (ctx->braceDepth >= 2) ctx->current_tuple.push_back(c);
+                        } else {
+                            // ']'
+                            ctx->braceDepth--;
+                            ctx->current_tuple.push_back(c);
+
+                            if (ctx->braceDepth == 1) {
+                                // vllm_tuple_streamer_logger.debug("Current tuple: " +
+                                //                                 ctx->current_tuple);
+                                try {
+                                    auto triple = json::parse(ctx->current_tuple);
+
+                                    if (!triple.is_array() || triple.size() < 5) {
+                                        vllm_tuple_streamer_logger.warn(
+                                            "Invalid tuple size detected. Retrying entire chunk.");
+
+                                        ctx->isSuccess = false;
+                                        ctx->retryChunk = true;
+                                        ctx->retryReason = "Tuple size less than 5. Tuple size should be 5 or more.";
+                                        return 0;   // IMMEDIATE ABORT of curl_easy_perform
+                                    }
+
+                                    if (triple.is_array()) {
+                                        std::string subject = triple[0].get<std::string>();
+                                        std::string predicate = triple[1].get<std::string>();
+                                        std::string object = triple[2].get<std::string>();
+                                        std::string subject_type = triple[3].get<std::string>();
+                                        std::string object_type = triple[4].get<std::string>();
+
+
+
+                                        std::string subject_id =
+                                            Utils::canonicalize(subject);
+                                        std::string object_id =
+                                            Utils::canonicalize(object);
+                                        std::string edge_id = Utils::canonicalize(
+                                            subject_id + "_" + predicate + "_" + object_id);
+
+                                        json formattedTriple = {
+                                            {"source",
+                                             {{"id", subject_id},
+                                              {"properties",
+                                               {{"id", subject_id},
+                                                {"label", subject_type},
+                                                {"name", subject}}}}},
+                                            {"destination",
+                                             {{"id", object_id},
+                                              {"properties",
+                                               {{"id", object_id},
+                                                {"label", object_type},
+                                                {"name", object}}}}},
+                                            {"properties",
+                                             {{"id", edge_id},
+                                              {"type", predicate}}}};
+
+                                        if (triple.size() == 6) {
+                                            formattedTriple["properties"]["when"] = triple[5].get<std::string>();
+                                        }
+
+                                        if (triple.size() == 7) {
+                                            formattedTriple["properties"]["when"] = triple[5].get<std::string>();
+                                            formattedTriple["properties"]["where"] = triple[6].get<std::string>();
+                                        }
+
+                                        ctx->buffer->add(formattedTriple.dump());
+                                        // vllm_tuple_streamer_logger.debug(
+                                        //     "? Added formatted triple: " + formattedTriple.dump());
+                                    }
+                                }
+
+                                catch (const std::exception& ex) {
+                                    vllm_tuple_streamer_logger.warn(
+                                        "? JSON array parse failed: " + std::string(ex.what()) + ". Invalid Tuple: " + std::string
+                                        (ctx->current_tuple));
+                                    vllm_tuple_streamer_logger.warn(
+                                           "Invalid tuple  detected. Retrying entire chunk.");
+
+                                    ctx->isSuccess = false;
+                                    ctx->retryChunk = true;
+                                    ctx->retryReason =  std::string(ex.what());
+                                    return 0;   // IMMEDIATE ABORT of curl_easy_perform
+                                }
+                                ctx->current_tuple.clear();
+                            }
+                        }
+                        i = bpos + 1;
+                    }
+                }
+            } catch (const std::exception& ex) {
+                vllm_tuple_streamer_logger.warn("JSON parse error: " +
+                                                 std::string(ex.what()));
+            }
+        }
+
+        return totalSize;
+    } catch (std::exception& e) {
+        vllm_tuple_streamer_logger.error("Error while calling stream callback");
+        vllm_tuple_streamer_logger.error(e.what());
+    }
 }
 
 // ---------------- Stream Chunk ----------------
 void VLLMTupleStreamer::streamChunk(const std::string& chunkKey,
                                     const std::string& chunkText,
                                     SharedBuffer& tupleBuffer) {
-  const int maxRetries = std::stoi(Utils::getJasmineGraphProperty(
-      "org.jasminegraph.kg.tuplestreamer.retry.max"));
-  const int baseDelaySeconds = std::stoi(Utils::getJasmineGraphProperty(
-      "org.jasminegraph.kg.tuplestreamer.retry.base"));  // exponential backoff base
-  int attempt = 0;
-  CURLcode res;
 
-  StreamContext ctx{chunkKey, &tupleBuffer, "", true};
+    try {
+        const int maxRetries = std::stoi(Utils::getJasmineGraphProperty(
+            "org.jasminegraph.kg.tuplestreamer.retry.max"));
+        const int baseDelaySeconds = std::stoi(Utils::getJasmineGraphProperty(
+            "org.jasminegraph.kg.tuplestreamer.retry.base"));  // exponential backoff base
+        int attempt = 0;
+        CURLcode res;
 
-  do {
-      tupleBuffer.clear();   // avoid mixing partial results
-      ctx.braceDepth = 0;
+        StreamContext ctx{chunkKey, &tupleBuffer, "", true};
 
-      ctx.isSuccess = true;
+        do {
+            tupleBuffer.clear();   // avoid mixing partial results
+            ctx.braceDepth = 0;
 
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-      vllm_tuple_streamer_logger.error("Failed to initialize CURL");
-      return;
+            ctx.isSuccess = true;
+
+            CURL* curl = curl_easy_init();
+            if (!curl) {
+                vllm_tuple_streamer_logger.error("Failed to initialize CURL");
+                return;
+            }
+
+            // TLS settings
+            curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_DEFAULT);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+            // Timeouts and keepalive
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 50L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
+            curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+            curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 60L);
+            curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 30L);
+
+            std::string url = host + "/v1/chat/completions";
+            // vllm_tuple_streamer_logger.debug("Connecting to VLLM server at: " + host);
+
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            // vllm_tuple_streamer_logger.debug("2232");
+            std::string userPrompt;
+
+            if (!ctx.retryChunk) {
+                // First attempt (normal extraction)
+                userPrompt =
+                    Prompts::KNOWLEDGE_EXTRACTION +
+
+                                             "\nNow process the following text:\n" +
+                                             chunkText + "\n\nArray:";
+                // vllm_tuple_streamer_logger.debug("242");
+            } else {
+                // vllm_tuple_streamer_logger.debug("244");
+                // Retry attempt (corrective)
+                userPrompt =
+                    Prompts::KNOWLEDGE_EXTRACTION +
+                    "\n PREVIOUS OUTPUT WAS INVALID.\n"
+                +"Previous OUTPUT TUPLE : " + ctx.current_tuple+ " \n"
+                +"Invalid Reason: " + ctx.retryReason+ " \n"
+                    "\nNow RE-EXTRACT from the SAME text:\n" +
+                    chunkText +
+                    "\n\nArray:";
+            }
+            // JSON request
+            json jsonRequest;
+            jsonRequest["model"] = model;
+            jsonRequest["messages"] = {{{"role", "system"},
+                              {"content",
+                               "You are an expert information extractor specialized in knowledge graph construction."}},
+                {{"role", "user"}, {"content", userPrompt}}};
+
+            jsonRequest["stream"] = true;
+            jsonRequest["max_tokens"] = 10000;
+            std::string postFields;
+            // vllm_tuple_streamer_logger.debug("265");
+            // vllm_tuple_streamer_logger.debug(jsonRequest);
+            // vllm_tuple_streamer_logger.debug(chunkText);
+            try {
+                postFields = jsonRequest.dump();
+            } catch (exception& e) {
+                vllm_tuple_streamer_logger.warn("JsonRequest parsing failed in vllm");
+                vllm_tuple_streamer_logger.error( e.what());
+            }
+            // vllm_tuple_streamer_logger.debug("267");
+
+            // vllm_tuple_streamer_logger.info("Post fields: " + postFields);
+            ctx.current_tuple = "";
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, postFields.size());
+            // vllm_tuple_streamer_logger.debug("273");
+
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            // vllm_tuple_streamer_logger.debug("278");
+
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, StreamCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+            // vllm_tuple_streamer_logger.debug("282");
+
+
+
+            res = curl_easy_perform(curl);
+            // vllm_tuple_streamer_logger.debug("285");
+
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            ctx.retryChunk = false;
+            if (res == CURLE_WRITE_ERROR && !ctx.retryChunk) {
+                vllm_tuple_streamer_logger.warn(
+                    "Stream aborted by callback due to invalid tuple. Retrying immediately.");
+                int waitTime = attempt;
+                vllm_tuple_streamer_logger.info("Retrying in " +
+                                                std::to_string(waitTime) + " seconds...");
+                std::this_thread::sleep_for(std::chrono::seconds(waitTime));
+            } else if (res != CURLE_OK && attempt < maxRetries - 1) {
+                vllm_tuple_streamer_logger.error("CURL response code: " +
+                                                 std::to_string(res));
+                int waitTime = baseDelaySeconds * attempt;
+                vllm_tuple_streamer_logger.info("Retrying in " +
+                                                std::to_string(waitTime) + " seconds...");
+                std::this_thread::sleep_for(std::chrono::seconds(waitTime));
+            }
+            // vllm_tuple_streamer_logger.debug("305");
+
+            attempt++;
+        } while ((res != CURLE_OK && attempt < maxRetries) || !ctx.isSuccess);
+
+        if (res != CURLE_OK) {
+            vllm_tuple_streamer_logger.error("Failed after " +
+                                             std::to_string(maxRetries) + " attempts.");
+            ctx.buffer->add("-1");
+        }
+    } catch (std::exception& e) {
+        vllm_tuple_streamer_logger.error("Exception while trying to connect to VLLM");
     }
-
-    // TLS settings
-    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_DEFAULT);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-
-    // Timeouts and keepalive
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 50L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 60L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 30L);
-
-    std::string url = host + "/v1/chat/completions";
-    vllm_tuple_streamer_logger.debug("Connecting to VLLM server at: " + host);
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-
-      std::string userPrompt;
-
-      if (!ctx.retryChunk) {
-          // First attempt (normal extraction)
-          userPrompt =
-              Prompts::KNOWLEDGE_EXTRACTION +
-
-                                       "\nNow process the following text:\n" +
-                                       chunkText + "\n\nArray:";
-      } else {
-          // Retry attempt (corrective)
-          userPrompt =
-              Prompts::KNOWLEDGE_EXTRACTION +
-              "\n PREVIOUS OUTPUT WAS INVALID.\n"
-          + "Previous OUTPUT TUPLE : " + ctx.current_tuple + " \n"
-          + "Invalid Reason: " + ctx.retryReason + " \n"
-              "\nNow RE-EXTRACT from the SAME text:\n" +
-              chunkText +
-              "\n\nArray:";
-      }
-    // JSON request
-    json jsonRequest;
-    jsonRequest["model"] = model;
-    jsonRequest["messages"] = {{{"role", "system"},
-                      {"content",
-                       "You are an expert information extractor specialized in knowledge graph construction."}},
-        {{"role", "user"}, {"content", userPrompt}}};
-
-    jsonRequest["stream"] = true;
-    jsonRequest["max_tokens"] = 10000;
-
-    std::string postFields = jsonRequest.dump();
-    ctx.current_tuple = "";
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, postFields.size());
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, StreamCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-
-    res = curl_easy_perform(curl);
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-      ctx.retryChunk = false;
-      if (res == CURLE_WRITE_ERROR && !ctx.retryChunk) {
-          vllm_tuple_streamer_logger.warn(
-              "Stream aborted by callback due to invalid tuple. Retrying immediately.");
-          int waitTime = baseDelaySeconds * attempt;
-          vllm_tuple_streamer_logger.info("Retrying in " +
-                                          std::to_string(waitTime) + " seconds...");
-          std::this_thread::sleep_for(std::chrono::seconds(waitTime));
-      } else if (res != CURLE_OK && attempt < maxRetries - 1) {
-      vllm_tuple_streamer_logger.error("CURL response code: " +
-                                       std::to_string(res));
-      int waitTime = baseDelaySeconds * attempt;
-      vllm_tuple_streamer_logger.info("Retrying in " +
-                                      std::to_string(waitTime) + " seconds...");
-      std::this_thread::sleep_for(std::chrono::seconds(waitTime));
-    }
-
-    attempt++;
-  } while ((res != CURLE_OK && attempt < maxRetries) || !ctx.isSuccess);
-
-  if (res != CURLE_OK) {
-    vllm_tuple_streamer_logger.error("Failed after " +
-                                     std::to_string(maxRetries) + " attempts.");
-    ctx.buffer->add("-1");
-  }
 }

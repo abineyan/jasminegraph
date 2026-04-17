@@ -135,10 +135,10 @@ void AgentPlanExecutor::execute() {
     sendField("llmModel", llmModel);
     sendField("workerList", workerListStr);
 
-    // // --- Receive results line-by-line until -1 ---
+     // // --- Receive results line-by-line until -1 ---
     std::string lineBuffer;
     char c;
-
+    json result;
     while (true) {
         ssize_t bytesRead = recv(sockfd, &c, 1, 0);
         if (bytesRead <= 0) {
@@ -167,10 +167,34 @@ void AgentPlanExecutor::execute() {
                     break;
                 }
 
+                if (payload.contains("type") && payload["type"] == "objective_traces") {
+                    agent_executor_logger.info("Objective traces received");
+
+                    result["objectives"] = payload["data"];
+
+                    // std::string tracesStr = payload["data"].dump(2);
+
+                    // Send to frontend
+                    // ssize_t n = write(connFd, tracesStr.c_str(), tracesStr.size());
+                    // write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+
+                    // if (n < 0) {
+                    //     agent_executor_logger.error("Error writing objective traces to frontend socket");
+                    //     *loop_exit = true;
+                    //     close(sockfd);
+                    //     return;
+                    // }
+
+                    continue;
+                }
+
                 if (payload.contains("type") && payload["type"] == "answer_chunk") {
                     std::string dataStr = payload["data"];
                     nlohmann::json innerJson = nlohmann::json::parse(dataStr);
                     std::string chunkContent = innerJson["answer"];
+                    result["plan_type"] = "DECOMPOSED";
+                    result["answer"] =  chunkContent;
+                    chunkContent = "ANSWER:" + result.dump();
 
                     ssize_t n = write(connFd, chunkContent.c_str(), chunkContent.size());
                     write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());

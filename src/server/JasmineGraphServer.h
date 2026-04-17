@@ -116,6 +116,7 @@ class JasmineGraphServer {
     int numberOfWorkers = -1;
 
     struct worker {
+        int workerId;
         std::string hostname;
         int port;
         int dataPort;

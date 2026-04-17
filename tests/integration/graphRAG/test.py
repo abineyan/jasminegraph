@@ -1,4 +1,4 @@
-"""Copyright 2025 JasmineGraph Team
+"""Copyright 2026 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -178,9 +178,6 @@ failed_tests = []
 
 def test(host, port):
     """Test the JasmineGraph server by sending a series of commands and checking the responses."""
-
-    # subprocess.run(['bash', OLLAMA_SETUP_SCRIPT], check=True)
-
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect((host, port))

@@ -15,7 +15,7 @@ limitations under the License.
 #include "../../../../server/JasmineGraphServer.h"
 
 Logger semantic_beam_search_logger_executor;
-
+std::mutex resultsMutex;
 SemanticBeamSearchExecutor::SemanticBeamSearchExecutor() {}
 
 SemanticBeamSearchExecutor::SemanticBeamSearchExecutor(
@@ -43,27 +43,66 @@ void SemanticBeamSearchExecutor::execute() {
         std::stoi(request.getParameter(Conts::PARAM_KEYS::CONN_FILE_DESCRIPTOR));
     bool* loop_exit = reinterpret_cast<bool*>(static_cast<std::uintptr_t>(
         std::stoull(request.getParameter(Conts::PARAM_KEYS::LOOP_EXIT_POINTER))));
-    const auto& workerList = JasmineGraphServer::getWorkers(numberOfPartitions);
+    const auto& leastLoadedWorkerList = JasmineGraphServer::getWorkers(numberOfPartitions);
     bool canCalibrate = Utils::parseBoolean(canCalibrateString);
     bool autoCalibrate = Utils::parseBoolean(autoCalibrateString);
     std::vector<std::future<void>> intermRes;
     std::vector<std::future<int>> statResponse;
+
+    std::unordered_map<std::string, JasmineGraphServer::worker> workerByIP;
+
+    for (const auto& w : leastLoadedWorkerList) {
+        workerByIP[w.hostname] = w;
+    }
     std::string workerListString;
 
     auto begin = chrono::high_resolution_clock::now();
 
-    int counter = 0;
+    std::map<int, JasmineGraphServer::worker> partitionWorkerMap;  // key = partitionId
+    std::string sqlStatement =
+        "SELECT partition_idpartition, worker.ip, worker.server_port, worker.server_data_port "
+        "FROM worker_has_partition "
+        "INNER JOIN worker ON worker.idworker = worker_has_partition.worker_idworker "
+        "WHERE partition_graph_idgraph = " + graphId + ";";
 
-    for (const auto& worker : workerList) {
-        counter++;
-        workerListString += worker.hostname + ":" +
-                            std::to_string(worker.port) + ":" +
-                            std::to_string(worker.dataPort);
+    const auto& result = sqlite->runSelect(sqlStatement);
 
-        if (counter < numberOfPartitions) {
-            workerListString += ",";
+    for (const auto& row : result) {
+
+        int partitionId = std::stoi(row[0].second);
+        JasmineGraphServer::worker w;
+        auto it = workerByIP.find(row[1].second);
+        if (it != workerByIP.end()) {
+             w = it->second;
+        } else {
+            w.hostname = row[1].second;
+            w.port = std::stoi(row[2].second);
+            w.dataPort = std::stoi(row[3].second);
+        }
+        partitionWorkerMap[partitionId] = w;
+        semantic_beam_search_logger_executor.info(w.hostname);
+        semantic_beam_search_logger_executor.info(to_string(w.port));
+
+
+    }
+
+    std::ostringstream workerListStream;
+
+    for (int i = 0; i < numberOfPartitions; ++i) {
+
+        if (partitionWorkerMap.find(i) != partitionWorkerMap.end()) {
+
+            JasmineGraphServer::worker w = partitionWorkerMap[i];
+
+            workerListStream << w.hostname << ":" << w.port;
+
+            if (i != numberOfPartitions - 1) {
+                workerListStream << ",";
+            }
         }
     }
+
+    workerListString = workerListStream.str();
 
     std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
     bufferPool.reserve(numberOfPartitions);  // Pre-allocate space for pointers
@@ -72,16 +111,16 @@ void SemanticBeamSearchExecutor::execute() {
     }
     std::vector<std::thread> readThreads;
     int count = 0;
+    chrono::system_clock::time_point startTime = std::chrono::high_resolution_clock::now();
 
     std::vector<std::thread> workerThreads;
-    count = 0;
-    for (auto worker : workerList) {
+    for (int i = 0; i < numberOfPartitions; ++i) {
+        JasmineGraphServer::worker worker= partitionWorkerMap[i];
         workerThreads.emplace_back(doSemanticBeamSearch, worker.hostname,
-                                   worker.port, masterIP, std::stoi(graphId), count,
-                                   queryString, std::ref(*bufferPool[count]),
-                                   numberOfPartitions, workerListString);
-        count++;
-    }
+                                           worker.port, masterIP, std::stoi(graphId), i,
+                                           queryString, std::ref(*bufferPool[i]),
+                                           numberOfPartitions, workerListString);    }
+
     vector<json> results;
     int closeFlag = 0;
     int result_wr;
@@ -96,7 +135,11 @@ void SemanticBeamSearchExecutor::execute() {
         if (data == "-1") {
           break;
         }
-        results.push_back(json::parse(data));
+
+          {
+           std::lock_guard<std::mutex> lock(resultsMutex);
+           results.push_back(json::parse(data));
+       }
       } });
     }
     for (auto& t : readThreads) {
@@ -132,8 +175,12 @@ void SemanticBeamSearchExecutor::execute() {
             break;
         }
     }
+    chrono::system_clock::time_point endTime = std::chrono::high_resolution_clock::now();
+   ;
     semantic_beam_search_logger_executor.info(
-        "###SBS-QUERY-EXECUTOR### Executing Query : Fetching Results");
+    "###SBS-QUERY-EXECUTOR### Executing Query : Executed in (ms)" + to_string(
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+     endTime - startTime).count()));
 
     semantic_beam_search_logger_executor.info(
         "###SBS-QUERY-EXECUTOR### Executing Query : Completed");

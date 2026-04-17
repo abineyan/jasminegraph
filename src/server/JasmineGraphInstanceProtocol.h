@@ -153,7 +153,7 @@ class JasmineGraphInstanceProtocol {
     static const string AGENT_PLAN;
 };
 
-const int INSTANCE_DATA_LENGTH = 300;
+const int INSTANCE_DATA_LENGTH = 1024;
 const int FED_DATA_LENGTH = 300;
 const int INSTANCE_LONG_DATA_LENGTH = 5048;
 const int INSTANCE_FILE_BUFFER_LENGTH = 1024;

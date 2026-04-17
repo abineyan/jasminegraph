@@ -45,7 +45,7 @@ bool NodeBlock::isInUse() { return this->usage == '\1'; }
 std::string NodeBlock::getLabel() { return std::string(this->label); }
 
 void NodeBlock::setLabel(const char *_label) {
-    node_block_logger.debug("Setting Node Label");
+    // node_block_logger.debug("Setting Node Label");
 std::strncpy(this->label, _label, NodeBlock::LABEL_SIZE - 1);
         this->label[NodeBlock::LABEL_SIZE - 1] = '\0';
     node_block_logger.debug("Done Setting Node label");
@@ -53,10 +53,10 @@ std::strncpy(this->label, _label, NodeBlock::LABEL_SIZE - 1);
 
 void NodeBlock::addLabel(char *label) {
     if (this->label == this->id && strlen(label) != 0) {
-        node_block_logger.debug(this->label);
-        node_block_logger.debug("nodeID: " + std::to_string(this->nodeId));
-        node_block_logger.debug("edgeRef: " + std::to_string(this->edgeRef));
-        node_block_logger.debug(std::to_string(this->addr));
+        // node_block_logger.debug(this->label);
+        // node_block_logger.debug("nodeID: " + std::to_string(this->nodeId));
+        // node_block_logger.debug("edgeRef: " + std::to_string(this->edgeRef));
+        // node_block_logger.debug(std::to_string(this->addr));
         std::strncpy(this->label, label, NodeBlock::LABEL_SIZE - 1);
         this->label[NodeBlock::LABEL_SIZE - 1] = '\0';
         NodeBlock::nodesDB->seekp(this->addr + sizeof(this->usage) + sizeof(this->nodeId) + sizeof(this->edgeRef) +
@@ -69,7 +69,7 @@ void NodeBlock::addLabel(char *label) {
 
 void NodeBlock::save() {
     //    pthread_mutex_lock(&lockSaveNode);
-    node_block_logger.debug("Saving Node Block");
+    // node_block_logger.debug("Saving Node Block");
 char _label[PropertyLink::MAX_VALUE_SIZE] = {0};
 if (!id.empty()) {
     std::strncpy(_label, id.c_str(), PropertyLink::MAX_VALUE_SIZE - 1);
@@ -103,36 +103,39 @@ if (isSmallLabel) {
 }
 
 void NodeBlock::addProperty(std::string name, const char* value) {
-    node_block_logger.debug("Attempting to add property: " + name + " to node at address: " +
-        std::to_string(this->addr));
+    // node_block_logger.debug("Attempting to add property: " + name + " to node at address: " +
+        // std::to_string(this->addr));
     if (this->propRef == 0) {
         PropertyLink* newLink = PropertyLink::create(name, value);
         //        pthread_mutex_lock(&lockAddNodeProperty);
         if (newLink) {
             this->propRef = newLink->blockAddress;
-            node_block_logger.debug("Created new PropertyLink at address: " + std::to_string(newLink->blockAddress));
-
+            // node_block_logger.debug("Created new PropertyLink at address: " + std::to_string(newLink->blockAddress));
+            // If it was an empty prop link before inserting, Then update the property reference of this node
+            // block
+            //            node_block_logger.info("propRef = " + std::to_string(this->propRef));
+            // NodeBlock::nodesDB->clear();
 
             NodeBlock::nodesDB->seekp(this->addr +sizeof(this->usage) +sizeof(this->nodeId) + sizeof(this->edgeRef) +
                                       sizeof(this->centralEdgeRef) + sizeof(this->edgeRefPID));
             NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->propRef)), sizeof(this->propRef));
             NodeBlock::nodesDB->flush();
-            node_block_logger.debug("Updated propRef in DB for node at address: " + std::to_string(this->addr));
+            // node_block_logger.debug("Updated propRef in DB for node at address: " + std::to_string(this->addr));
         } else {
             node_block_logger.error("Error occurred while adding a new property link to " +
                         std::to_string(this->addr) + " node block");
         }
     } else {
-        node_block_logger.debug("Property head exists. Inserting property: " + name +
-            " to existing PropertyLink chain.");
+        // node_block_logger.debug("Property head exists. Inserting property: " + name +
+        //     " to existing PropertyLink chain.");
         this->propRef = this->getPropertyHead()->insert(name, value);
-        node_block_logger.debug("Updated propRef after insert: " + std::to_string(this->propRef));
+        // node_block_logger.debug("Updated propRef after insert: " + std::to_string(this->propRef));
     }
 }
 
 void NodeBlock::addMetaProperty(std::string name, const char* value) {
-    node_block_logger.debug("Attempting to add meta property: " + name + " to node at address: "
-        + std::to_string(this->addr));
+    // node_block_logger.debug("Attempting to add meta property: " + name + " to node at address: "
+        // + std::to_string(this->addr));
     if (this->metaPropRef == 0) {
         MetaPropertyLink* newLink = MetaPropertyLink::create(name, value);
 
@@ -145,16 +148,16 @@ void NodeBlock::addMetaProperty(std::string name, const char* value) {
                                       sizeof(this->centralEdgeRef) + sizeof(this->edgeRefPID) + sizeof(this->propRef));
             NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->metaPropRef)), sizeof(this->metaPropRef));
             NodeBlock::nodesDB->flush();
-            node_block_logger.debug("Updated metaPropRef in DB for node at address: " + std::to_string(this->addr));
+            // node_block_logger.debug("Updated metaPropRef in DB for node at address: " + std::to_string(this->addr));
         } else {
             node_block_logger.error("Error occurred while adding a new meta property link to " +
                                     std::to_string(this->addr) + " node block");
         }
     } else {
-        node_block_logger.debug("Meta property head exists. Inserting meta property: " + name +
-            " to existing MetaPropertyLink chain.");
+        // node_block_logger.debug("Meta property head exists. Inserting meta property: " + name +
+        //     " to existing MetaPropertyLink chain.");
         this->metaPropRef = this->getMetaPropertyHead()->insert(name, value);
-        node_block_logger.debug("Updated metaPropRef after insert: " + std::to_string(this->metaPropRef));
+        // node_block_logger.debug("Updated metaPropRef after insert: " + std::to_string(this->metaPropRef));
     }
 }
 
@@ -165,7 +168,7 @@ bool NodeBlock::updateLocalRelation(RelationBlock* newRelation, bool relocateHea
 
     if (relocateHead) {  // Insert new relation link to the head of the link list
         if (currentHead) {
-            node_block_logger.debug("Relocating local relation head at address: " + std::to_string(thisAddress));
+            // node_block_logger.debug("Relocating local relation head at address: " + std::to_string(thisAddress));
             if (thisAddress == currentHead->source.address) {
                 currentHead->setLocalPreviousSource(newRelation->addr);
             } else if (thisAddress == currentHead->destination.address) {
@@ -183,7 +186,7 @@ bool NodeBlock::updateLocalRelation(RelationBlock* newRelation, bool relocateHea
                     " new relation does not contain current node in its source or destination");
             }
         }
-        node_block_logger.debug("Updated local relation at address: " + std::to_string(thisAddress));
+        // node_block_logger.debug("Updated local relation at address: " + std::to_string(thisAddress));
         return this->setLocalRelationHead(*newRelation);
     }
     RelationBlock* currentRelation = currentHead;
@@ -521,10 +524,10 @@ NodeBlock* NodeBlock::get(unsigned int blockAddress) {
         node_block_logger.error("Error while reading label data from block " + std::to_string(blockAddress));
     }
     bool usage = usageBlock == '\1';
-    node_block_logger.debug("Label = " + std::string(label));
-    node_block_logger.debug("Label = " + std::string(label));
-    node_block_logger.debug("Length of label = " + std::to_string(strlen(label)));
-    node_block_logger.debug("edgeRef = " + std::to_string(edgeRef));
+    // node_block_logger.debug("Label = " + std::string(label));
+    // node_block_logger.debug("Label = " + std::string(label));
+    // node_block_logger.debug("Length of label = " + std::to_string(strlen(label)));
+    // node_block_logger.debug("edgeRef = " + std::to_string(edgeRef));
     if (strlen(label) != 0) {
         id = std::to_string(nodeId);
     }
@@ -540,7 +543,7 @@ NodeBlock* NodeBlock::get(unsigned int blockAddress) {
                 std::to_string(nodeBlockPointer->addr));
         }
     }
-    node_block_logger.debug("Edge ref = " + std::to_string(nodeBlockPointer->edgeRef));
+    // node_block_logger.debug("Edge ref = " + std::to_string(nodeBlockPointer->edgeRef));
     if (nodeBlockPointer->edgeRef % RelationBlock::BLOCK_SIZE != 0) {
         node_block_logger.error("Exception: Invalid edge reference address = " + nodeBlockPointer->edgeRef);
     }

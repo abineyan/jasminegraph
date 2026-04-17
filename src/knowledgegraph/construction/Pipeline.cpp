@@ -35,6 +35,7 @@ class SQLiteDBInterface;
 using json = nlohmann::json;
 using namespace std;
 using namespace std::chrono;
+std::mutex partitionerMutex;
 
 Logger kg_pipeline_stream_handler_logger;
 
@@ -46,9 +47,11 @@ const size_t OVERLAP_BYTES = 1024;  // bytes to overlap between chunks to avoid 
 const std::string END_OF_STREAM_MARKER = "-1";
 
 Pipeline::Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
-                   std::string masterIP, vector<JasmineGraphServer::worker>& workerList,
+                   std::string masterIP, vector<JasmineGraphServer::worker>& workerList,std::string
+                   workersPartitionMapping,
                    std::vector<std::string> llmRunners, std::string llmInferenceEngine, std::string llm,
-                   std::string chunkSize, std::string chunksPerBatch, long startFromBytes)
+                   std::string chunkSize, std::string chunksPerBatch, long startFromBytes, long nextNodeIndex, long
+                   nextEdgeIndex)
     : connFd(connFd),
       fileSystem(fileSystem),
       filePath(filePath),
@@ -58,12 +61,15 @@ Pipeline::Pipeline(int connFd, hdfsFS fileSystem, const std::string& filePath, i
       graphId(graphId),
       masterIP(masterIP),
       workerList(workerList),
+workersPartitionMapping(workersPartitionMapping),
       llmRunners(llmRunners),
       llmInferenceEngine(llmInferenceEngine),
       llm(llm),
       chunkSize(chunkSize),
       chunksPerBatch(chunksPerBatch),
-      startFromBytes(startFromBytes) {}
+      startFromBytes(startFromBytes),
+nextNodeIndex(nextNodeIndex),
+nextEdgeIndex(nextEdgeIndex){}
 
 Pipeline::Pipeline(int connFd,
                    const std::string& filePath,
@@ -103,163 +109,181 @@ void Pipeline::init() {
 // Reads chunks of fixed byte size from an AHDFS file and pushes them as chunks
 // with generated doc_id
 void Pipeline::streamFromHDFSIntoBuffer() {
-    auto startTime = chrono::high_resolution_clock::now();
-    kg_pipeline_stream_handler_logger.info("Started streaming data from HDFS into data buffer...");
-    hdfsFileInfo* fileInfo = hdfsGetPathInfo(fileSystem, filePath.c_str());
-    if (!fileInfo) {
-        kg_pipeline_stream_handler_logger.error("Failed to get HDFS file info.");
-        return;
-    }
-    int64_t total_file_size = fileInfo->mSize;
-    hdfsFreeFileInfo(fileInfo, 1);
-    hdfsFile file = hdfsOpenFile(fileSystem, filePath.c_str(), O_RDONLY, 0, 0, 0);
-    if (!file) {
-        kg_pipeline_stream_handler_logger.error("Failed to open HDFS file.");
-        isReading = false;
-        dataBufferCV.notify_all();
-        return;
-    }
-
-    kg_pipeline_stream_handler_logger.info("Successfully opened HDFS file: " + filePath);
-
-    std::vector<char> buffer(std::stol(chunkSize));
-    int64_t read_bytes = 0;
-    int chunk_idx = 0;
-    std::string leftover;
-
-    if (startFromBytes > 0) {
-        if (startFromBytes >= total_file_size) {
-            kg_pipeline_stream_handler_logger.error("startFromBytes exceeds total file size.");
-            hdfsCloseFile(fileSystem, file);
+    try {
+        auto startTime = chrono::high_resolution_clock::now();
+        kg_pipeline_stream_handler_logger.info("Started streaming data from HDFS into data buffer...");
+        hdfsFileInfo* fileInfo = hdfsGetPathInfo(fileSystem, filePath.c_str());
+        if (!fileInfo) {
+            kg_pipeline_stream_handler_logger.error("Failed to get HDFS file info.");
             return;
         }
-
-        if (hdfsSeek(fileSystem, file, startFromBytes) != 0) {
-            kg_pipeline_stream_handler_logger.error("Failed to seek to startFromBytes: " +
-                                                    std::to_string(startFromBytes));
-            hdfsCloseFile(fileSystem, file);
-            return;
-        }
-        bytes_read_so_far = startFromBytes;  // Initialize with startFromBytes
-        realtime_bytes_read_so_far = startFromBytes;
-
-        kg_pipeline_stream_handler_logger.info("Starting read from byte offset: " + std::to_string(startFromBytes));
-    }
-    while ((read_bytes = hdfsRead(fileSystem, file, buffer.data(), std::stol(chunkSize))) > 0) {
-        if (stopFlag) {
+        int64_t total_file_size = fileInfo->mSize;
+        hdfsFreeFileInfo(fileInfo, 1);
+        hdfsFile file = hdfsOpenFile(fileSystem, filePath.c_str(), O_RDONLY, 0, 0, 0);
+        if (!file) {
+            kg_pipeline_stream_handler_logger.error("Failed to open HDFS file.");
             isReading = false;
-            kg_pipeline_stream_handler_logger.info("Received Stop command , terminating");
-            break;
+            dataBufferCV.notify_all();
+            return;
         }
 
-        int64_t remaining_bytes = total_file_size - bytes_read_so_far;
-        double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
+        kg_pipeline_stream_handler_logger.info("Successfully opened HDFS file: " + filePath);
 
-        kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
-                                               " read: " + std::to_string(read_bytes) + " bytes, " +
-                                               "remaining bytes: " + std::to_string(remaining_bytes) + ", " +
-                                               "progress: " + std::to_string(percent_read) + "%");
-        kg_pipeline_stream_handler_logger.info("Starting to process chunk " + std::to_string(chunk_idx));
-        std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
+        std::vector<char> buffer(std::stol(chunkSize));
+        int64_t read_bytes = 0;
+        int chunk_idx = 0;
+        std::string leftover;
 
-        kg_pipeline_stream_handler_logger.debug("Read chunk " + std::to_string(chunk_idx) + " with " +
-                                               std::to_string(read_bytes) + " bytes");
-        kg_pipeline_stream_handler_logger.debug("Current leftover size: " + std::to_string(leftover.size()));
-        size_t split_pos = chunk_text.rfind("\n\n");
-        if (split_pos == std::string::npos) {
-            // If no paragraph boundary, split at last newline
-            split_pos = chunk_text.find_last_of('\n');
+        if (startFromBytes > 0) {
+            if (startFromBytes >= total_file_size) {
+                kg_pipeline_stream_handler_logger.error("startFromBytes exceeds total file size.");
+                hdfsCloseFile(fileSystem, file);
+                return;
+            }
+
+            if (hdfsSeek(fileSystem, file, startFromBytes) != 0) {
+                kg_pipeline_stream_handler_logger.error("Failed to seek to startFromBytes: " +
+                                                        std::to_string(startFromBytes));
+                hdfsCloseFile(fileSystem, file);
+                return;
+            }
+            bytes_read_so_far = startFromBytes;  // Initialize with startFromBytes
+            realtime_bytes_read_so_far = startFromBytes;
+
+            kg_pipeline_stream_handler_logger.info("Starting read from byte offset: " + std::to_string(startFromBytes));
         }
-        // Find last newline to keep only complete lines in chunk pushed to
-        // dataBuffer
-        if (split_pos == std::string::npos) {
-            kg_pipeline_stream_handler_logger.debug("No newline found in chunk " + std::to_string(chunk_idx) +
-                                                   ", storing as leftover");
-            leftover = chunk_text;
-            kg_pipeline_stream_handler_logger.debug("Updated leftover size: " + std::to_string(leftover.size()));
-            continue;
-        }
+        while ((read_bytes = hdfsRead(fileSystem, file, buffer.data(), std::stol(chunkSize))) > 0) {
+            if (read_bytes < 0) {
+                kg_pipeline_stream_handler_logger.error("HDFS read error: " + std::to_string(read_bytes));
+                break;
+            }
+            if (read_bytes > buffer.size()) {
+                read_bytes = buffer.size();
+            }
 
-        // Split into complete lines and leftover partial line
-        std::string full_lines_chunk = chunk_text.substr(0, split_pos + 1);
-        size_t overlap_start = (full_lines_chunk.size() > std::stod(chunkSize)*0.3) ? full_lines_chunk.size() -
-            std::stod(chunkSize)*0.3 : 0;
+            if (stopFlag) {
+                isReading = false;
+                kg_pipeline_stream_handler_logger.info("Received Stop command , terminating");
+                break;
+            }
 
-        // make sure leftover starts at a newline
-        size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
-        if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
-            leftover = full_lines_chunk.substr(newline_pos + 1);
-        } else {
-            leftover.clear();
-        }
+            int64_t remaining_bytes = total_file_size - bytes_read_so_far;
+            double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
 
-        kg_pipeline_stream_handler_logger.debug("Full lines chunk size: " + std::to_string(full_lines_chunk.size()));
-        kg_pipeline_stream_handler_logger.debug("Leftover after split size: " + std::to_string(leftover.size()));
-        kg_pipeline_stream_handler_logger.debug("Pushing chunk " + std::to_string(chunk_idx) + " to dataBuffer");
+            kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
+            " read: " + std::to_string(read_bytes) + " bytes, " +
+            "remaining bytes: " + std::to_string(remaining_bytes) + ", " +
+            "progress: " + std::to_string(percent_read) + "%");
+            kg_pipeline_stream_handler_logger.info("Starting to process chunk " + std::to_string(chunk_idx));
+            std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
+            kg_pipeline_stream_handler_logger.debug("Read chunk " + std::to_string(chunk_idx) + " with " +
+            std::to_string(read_bytes) + " bytes");
+            kg_pipeline_stream_handler_logger.debug("Current leftover size: " + std::to_string(leftover.size()));
+            size_t split_pos = chunk_text.rfind("\n\n");
+            if (split_pos == std::string::npos) {
+                // If no paragraph boundary, split at last newline
+                split_pos = chunk_text.find_last_of('\n');
+                // if (split_pos == std::string::npos) {
+                //     // If no newline, split at last space
+                //     split_pos = chunk_text.find_last_of(' ');
+                // }
+            }
+            // Find last newline to keep only complete lines in chunk pushed to
+            // dataBuffer
+            // size_t last_newline = chunk_text.find_last_of('\n');
+            if (split_pos == std::string::npos) {
+                kg_pipeline_stream_handler_logger.debug("No newline found in chunk " + std::to_string(chunk_idx) +
+                ", storing as leftover");
+                leftover = chunk_text;
+                kg_pipeline_stream_handler_logger.debug("Updated leftover size: " + std::to_string(leftover.size()));
+                continue;
+            }
 
-        // Wait and push to dataBuffer safely
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        kg_pipeline_stream_handler_logger.debug("Waiting to acquire lock for dataBuffer push");
-        dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+            // Split into complete lines and leftover partial line
+            std::string full_lines_chunk = chunk_text.substr(0, split_pos + 1);
+            size_t overlap_start = (full_lines_chunk.size() > std::stod(chunkSize)*0.3) ? full_lines_chunk.size() -
+                std::stod(chunkSize)*0.3 : 0;
 
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(full_lines_chunk), read_bytes});
-        kg_pipeline_stream_handler_logger.debug(
+            // make sure leftover starts at a newline
+            size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
+            if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
+                leftover = full_lines_chunk.substr(newline_pos + 1);
+            } else {
+                leftover.clear();
+            }
+
+            kg_pipeline_stream_handler_logger.debug("Full lines chunk size: " + std::to_string(full_lines_chunk.size()));
+            kg_pipeline_stream_handler_logger.debug("Leftover after split size: " + std::to_string(leftover.size()));
+            kg_pipeline_stream_handler_logger.debug("Pushing chunk " + std::to_string(chunk_idx) + " to dataBuffer");
+
+            // Wait and push to dataBuffer safely
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            kg_pipeline_stream_handler_logger.debug("Waiting to acquire lock for dataBuffer push");
+            dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(full_lines_chunk), read_bytes});
+            kg_pipeline_stream_handler_logger.debug(
             "Chunk " + std::to_string(chunk_idx) +
             " pushed to dataBuffer. Current buffer size: " + std::to_string(dataBuffer.size()));
-        lock.unlock();
-        dataBufferCV.notify_all();
+            lock.unlock();
+            dataBufferCV.notify_all();
 
-        chunk_idx++;
-        kg_pipeline_stream_handler_logger.debug("Finished processing chunk " + std::to_string(chunk_idx));
-    }
-
-    // Push leftover partial line if any (last chunk)
-    if (!leftover.empty()) {
-        chunk_idx++;
-        kg_pipeline_stream_handler_logger.debug("Pushing leftover data to data buffer");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
-
-        lock.unlock();
-        dataBufferCV.notify_one();
-    }
-
-    if (read_bytes < 0) {
-        kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file");
-    }
-
-    hdfsCloseFile(fileSystem, file);
-    kg_pipeline_stream_handler_logger.debug("Closed HDFS file: " + filePath);
-    isReading = false;
-
-    if (!leftover.empty()) {
-        kg_pipeline_stream_handler_logger.debug("Pushing leftover data again to data buffer after closing file");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
-
-        lock.unlock();
-        dataBufferCV.notify_all();
-    }
-
-    {
-        kg_pipeline_stream_handler_logger.debug("Pushing END_OF_STREAM_MARKER to data buffer");
-        std::unique_lock<std::mutex> lock(dataBufferMutex);
-        // close all workers
-        for (auto worker : workerList) {
-            dataBuffer.push(Chunk{to_string(chunk_idx), END_OF_STREAM_MARKER, read_bytes});
+            chunk_idx++;
+            kg_pipeline_stream_handler_logger.debug("Finished processing chunk " + std::to_string(chunk_idx));
         }
-        lock.unlock();
-    }
 
-    dataBufferCV.notify_all();
-    auto endTime = high_resolution_clock::now();
-    std::chrono::duration<double> duration = endTime - startTime;
-    kg_pipeline_stream_handler_logger.debug("Successfully streamed data from HDFS into data buffer.");
-    kg_pipeline_stream_handler_logger.debug("Time taken to read from HDFS: " + to_string(duration.count()) +
-        " seconds");
+        // Push leftover partial line if any (last chunk)
+        if (!leftover.empty()) {
+            chunk_idx++;
+            // kg_pipeline_stream_handler_logger.debug("Pushing leftover data to dataBuffer");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            dataBufferCV.wait(lock, [this] { return dataBuffer.size() < workerList.size() || !isReading; });
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
+            leftover.clear();
+
+            lock.unlock();
+            dataBufferCV.notify_one();
+        }
+
+        if (read_bytes < 0) {
+            kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file");
+        }
+
+        hdfsCloseFile(fileSystem, file);
+        kg_pipeline_stream_handler_logger.debug("Closed HDFS file: " + filePath);
+        isReading = false;
+
+        if (!leftover.empty()) {
+            kg_pipeline_stream_handler_logger.debug("Pushing leftover data again to data buffer after closing file");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            dataBuffer.push(Chunk{to_string(chunk_idx), std::move(leftover), read_bytes});
+            leftover.clear();
+            lock.unlock();
+            dataBufferCV.notify_all();
+        }
+
+        {
+            kg_pipeline_stream_handler_logger.debug("Pushing END_OF_STREAM_MARKER to data buffer");
+            std::unique_lock<std::mutex> lock(dataBufferMutex);
+            // close all workers
+            for (auto worker : workerList) {
+                dataBuffer.push(Chunk{to_string(chunk_idx), END_OF_STREAM_MARKER, read_bytes});
+            }
+            lock.unlock();
+        }
+
+        dataBufferCV.notify_all();
+        auto endTime = high_resolution_clock::now();
+        std::chrono::duration<double> duration = endTime - startTime;
+        kg_pipeline_stream_handler_logger.debug("Successfully streamed data from HDFS into data buffer.");
+        kg_pipeline_stream_handler_logger.debug("Time taken to read from HDFS: " + to_string(duration.count()) +
+            " seconds");
+    } catch (std::exception& e) {
+        kg_pipeline_stream_handler_logger.error("Error reading from AHDFS file: ");
+    }
 }
 void Pipeline::streamFromLocalFileIntoBuffer() {
+
     auto startTime = chrono::high_resolution_clock::now();
     kg_pipeline_stream_handler_logger.info("Started streaming data from local file into data buffer...");
 
@@ -302,10 +326,10 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
         std::streamsize read_bytes = file.gcount();
         bytes_read_so_far += read_bytes;
         double percent_read = (static_cast<double>(bytes_read_so_far) / total_file_size) * 100.0;
-
+        //
         kg_pipeline_stream_handler_logger.debug("Chunk " + std::to_string(chunk_idx) +
-                                               " read: " + std::to_string(read_bytes) + " bytes, " +
-                                               "progress: " + std::to_string(percent_read) + "%");
+        " read: " + std::to_string(read_bytes) + " bytes, " +
+        "progress: " + std::to_string(percent_read) + "%");
 
         std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
 
@@ -342,6 +366,7 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
     if (!leftover.empty()) {
         std::unique_lock<std::mutex> lock(dataBufferMutex);
         dataBuffer.push(Chunk{std::to_string(chunk_idx), std::move(leftover), 0});
+        leftover.clear();
         lock.unlock();
         dataBufferCV.notify_all();
     }
@@ -365,142 +390,172 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
 }
 
 void Pipeline::startStreamingFromBufferToWorkers() {
-    auto startTime = high_resolution_clock::now();
+    try {
+        auto startTime = high_resolution_clock::now();
 
-    std::thread readerThread;
+        std::thread readerThread;
 
-    // Start the appropriate reader thread based on file system
-    if (fileSystem == nullptr) {
-        // Local file streaming
-        kg_pipeline_stream_handler_logger.info("Starting local file streaming thread...");
-        readerThread = std::thread(&Pipeline::streamFromLocalFileIntoBuffer, this);
-    } else {
-        // HDFS streaming
-        kg_pipeline_stream_handler_logger.info("Starting HDFS streaming thread...");
-        readerThread = std::thread(&Pipeline::streamFromHDFSIntoBuffer, this);
-    }
-
-    std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
-
-    bufferPool.reserve(stoi(chunksPerBatch));  // Pre-allocate space for pointers
-    for (size_t i = 0; i < stoi(chunksPerBatch); ++i) {
-        bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
-    }
-
-    std::vector<std::thread> workerThreads;
-    int count = 0;
-    for (auto& worker : workerList) {
-        if (count >= stoi(chunksPerBatch)) break;
-        workerThreads.emplace_back(&Pipeline::extractTuples, this, worker.hostname, worker.port, masterIP, graphId,
-                                   count, std::ref(dataBuffer), std::ref(*bufferPool[count]));
-        count++;
-    }
-
-    string meta = processTupleAndSaveInPartition(bufferPool).dump();
-    if (readerThread.joinable()) {
-        readerThread.join();
-    }
-
-    for (auto& worker : workerThreads) {
-        if (worker.joinable()) {
-            worker.join();
+        // Start the appropriate reader thread based on fileSystem
+        if (fileSystem == nullptr) {
+            // Local file streaming
+            kg_pipeline_stream_handler_logger.info("Starting local file streaming thread...");
+            readerThread = std::thread(&Pipeline::streamFromLocalFileIntoBuffer, this);
+        } else {
+            // HDFS streaming
+            kg_pipeline_stream_handler_logger.info("Starting HDFS streaming thread...");
+            readerThread = std::thread(&Pipeline::streamFromHDFSIntoBuffer, this);
         }
+
+        std::vector<std::shared_ptr<SharedBuffer>> bufferPool;
+
+        bufferPool.reserve(stoi(chunksPerBatch));  // Pre-allocate space for pointers
+        for (size_t i = 0; i < stoi(chunksPerBatch); ++i) {
+bufferPool.emplace_back(std::make_shared<SharedBuffer>(MASTER_BUFFER_SIZE));        }
+
+        std::vector<std::thread> workerThreads;
+        int count = 0;
+        for (auto& worker : workerList) {
+            if (count >= stoi(chunksPerBatch)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::shared_ptr<SharedBuffer> sb = bufferPool[count];
+
+            workerThreads.emplace_back(&Pipeline::extractTuples, this, worker.hostname, worker.port, masterIP, graphId,
+                                       count, std::ref(dataBuffer), sb);
+            count++;
+        }
+
+        string meta = processTupleAndSaveInPartition(bufferPool).dump();
+        if (readerThread.joinable()) {
+            readerThread.join();
+        }
+
+        for (auto& worker : workerThreads) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        isProcessing = false;
+
+        auto endTime = high_resolution_clock::now();
+        std::chrono::duration<double> duration = endTime - startTime;
+
+        kg_pipeline_stream_handler_logger.debug(meta);
+        char data[FED_DATA_LENGTH + 1];
+
+        Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, META.c_str(), JasmineGraphInstanceProtocol::OK);
+
+        char ack3[ACK_MESSAGE_SIZE] = {0};
+        int message_length = meta.length();
+        int converted_number = htonl(message_length);
+        kg_pipeline_stream_handler_logger.debug("Sending content length: " + to_string(converted_number));
+
+        if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(), converted_number,
+                                          JasmineGraphInstanceProtocol::OK)) {
+            Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
+            close(connFd);
+            return;
+                                          }
+
+        if (!Utils::send_str_wrapper(connFd, meta)) {
+            close(connFd);
+            return;
+        }
+        Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, DONE.c_str(), JasmineGraphInstanceProtocol::OK);
+
+        kg_pipeline_stream_handler_logger.debug(
+            "Total time taken for streaming from HDFS into partitions: " + to_string(duration.count()) + " seconds");
+    } catch (std::exception& e) {
+        kg_pipeline_stream_handler_logger.error("Error while streaming from buffer to Workers");
     }
-    isProcessing = false;
-
-    auto endTime = high_resolution_clock::now();
-    std::chrono::duration<double> duration = endTime - startTime;
-
-    kg_pipeline_stream_handler_logger.debug(meta);
-    char data[FED_DATA_LENGTH + 1];
-
-    Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, META.c_str(), JasmineGraphInstanceProtocol::OK);
-
-    char ack3[ACK_MESSAGE_SIZE] = {0};
-    int message_length = meta.length();
-    int converted_number = htonl(message_length);
-    kg_pipeline_stream_handler_logger.debug("Sending content length: " + to_string(converted_number));
-
-    if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(), converted_number,
-                                      JasmineGraphInstanceProtocol::OK)) {
-        Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
-        close(connFd);
-        return;
-    }
-
-    if (!Utils::send_str_wrapper(connFd, meta)) {
-        close(connFd);
-        return;
-    }
-    Utils::sendExpectResponse(connFd, data, INSTANCE_DATA_LENGTH, DONE.c_str(), JasmineGraphInstanceProtocol::OK);
-
-    kg_pipeline_stream_handler_logger.debug(
-        "Total time taken for streaming from HDFS into partitions: " + to_string(duration.count()) + " seconds");
 }
 
-json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<SharedBuffer>>& tupleBuffer) {
+json Pipeline::processTupleAndSaveInPartition(const std::vector<std::shared_ptr<SharedBuffer>>& tupleBuffer) {
     auto startTime = high_resolution_clock::now();
 
     kg_pipeline_stream_handler_logger.debug("Starting processTupleAndSaveInPartition");
     Partitioner partitioner(numberOfPartitions, graphId,  spt::FENNEL, sqlite,  true);
+    std::vector<JasmineGraphServer::worker> workersPartitionMappingList;
+    kg_pipeline_stream_handler_logger.info(workersPartitionMapping);
+    std::stringstream ss(workersPartitionMapping);
+    std::string item;
+
+    while (std::getline(ss, item, ',')) {  // split by comma
+        std::stringstream itemSS(item);
+        std::string hostname, portStr, dataPortStr;
+
+        if (!std::getline(itemSS, hostname, ':')) continue;
+        if (!std::getline(itemSS, portStr, ':')) continue;
+        if (!std::getline(itemSS, dataPortStr, ':')) continue;
+
+        JasmineGraphServer::worker w;
+        w.hostname = hostname;
+        w.port = std::stoi(portStr);
+        w.dataPort = std::stoi(dataPortStr);
+
+        workersPartitionMappingList.push_back(w);
+    }
     HDFSMultiThreadedHashPartitioner partitions(numberOfPartitions, graphId, masterIP, true,
-        workerList, true, 100,
+        workersPartitionMappingList, true, 1000,
         sqlite);
     std::hash<std::string> hasher;
     std::vector<std::thread> tupleThreads;
-    std::thread metaThread([&]() {
+    std::thread metaDataThread([&]() {
     using namespace std::chrono;
 
     auto nextTick = steady_clock::now();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     while (metaThreadRunning.load(std::memory_order_relaxed)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(Conts::TIME_PERIOD_OF_META_DATA_UPDATE_TO_MASTER_SECS*
-            60000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(60000));
+        try {
+            kg_pipeline_stream_handler_logger.debug("Meta thread running");
 
-        kg_pipeline_stream_handler_logger.debug("Meta thread running");
+                            json meta;
+                            json graph;
+                            graph["vertexcount"] = partitions.getVertexCount();
+                            graph["edgecount"] = partitions.getEdgeCount();
+                            graph["centralpartitioncount"] = this->numberOfPartitions;
+                            graph["graph_status_idgraph_status"] = Conts::GRAPH_STATUS::OPERATIONAL;
+                            graph["nextNodeIndex"] = nextNodeIndex.load();
+            graph["nextEdgeIndex"] = nextEdgeIndex;
+                            meta["graph"] = graph;
+                            meta["partitions"] = partitions.getPartitionsMeta();
 
-                        json meta;
-                        json graph;
-                        graph["vertexcount"] = partitions.getVertexCount();
-                        graph["edgecount"] = partitions.getEdgeCount();
-                        graph["centralpartitioncount"] = this->numberOfPartitions;
-                        graph["graph_status_idgraph_status"] = Conts::GRAPH_STATUS::OPERATIONAL;
+                            char data[FED_DATA_LENGTH + 1];
 
-                        meta["graph"] = graph;
-                        meta["partitions"] = partitions.getPartitionsMeta();
+                            Utils::send_str_wrapper(connFd, META);
+                            string response = Utils::read_str_wrapper(connFd, data, FED_DATA_LENGTH);
 
-                        char data[FED_DATA_LENGTH + 1];
+                            char ack3[ACK_MESSAGE_SIZE] = {0};
+                            string metaS = meta.dump();
+                            int message_length = metaS.length();
+                            int converted_number = htonl(message_length);
+                            kg_pipeline_stream_handler_logger.debug("Sending content length: " +
+                                                                    to_string(converted_number));
 
-                        Utils::send_str_wrapper(connFd, META);
-                        string response = Utils::read_str_wrapper(connFd, data, FED_DATA_LENGTH);
+                            if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(),
+                                                              converted_number, JasmineGraphInstanceProtocol::OK)) {
+                                Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
+                                close(connFd);
+                                return;
+                            }
 
-                        char ack3[ACK_MESSAGE_SIZE] = {0};
-                        string metaS = meta.dump();
-                        int message_length = metaS.length();
-                        int converted_number = htonl(message_length);
-                        kg_pipeline_stream_handler_logger.debug("Sending content length: " +
-                                                                to_string(converted_number));
+                            if (!Utils::send_str_wrapper(connFd, metaS)) {
+                                close(connFd);
+                                return;
+                            }
+                            char ack2[FED_DATA_LENGTH + 1];
+                            Utils::send_str_wrapper(connFd, std::to_string(realtime_bytes_read_so_far));
 
-                        if (!Utils::sendIntExpectResponse(connFd, ack3, JasmineGraphInstanceProtocol::OK.length(),
-                                                          converted_number, JasmineGraphInstanceProtocol::OK)) {
-                            Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::CLOSE);
-                            close(connFd);
-                            return;
-                        }
+                            response = Utils::read_str_wrapper(connFd, ack2, FED_DATA_LENGTH);
 
-                        if (!Utils::send_str_wrapper(connFd, metaS)) {
-                            close(connFd);
-                            return;
-                        }
-                        char ack2[FED_DATA_LENGTH + 1];
-                        Utils::send_str_wrapper(connFd, std::to_string(realtime_bytes_read_so_far));
-
-                        response = Utils::read_str_wrapper(connFd, ack2, FED_DATA_LENGTH);
-
-                        if (response == "stop") {
-                            kg_pipeline_stream_handler_logger.info("stop request:" + response);
-                            stopFlag = true;
-                        }
+                            if (response == "stop") {
+                                kg_pipeline_stream_handler_logger.info("stop request:" + response);
+                                stopFlag = true;
+                            }
+        } catch (exception& e) {
+            kg_pipeline_stream_handler_logger.info("Error while parsing");
+            kg_pipeline_stream_handler_logger.info(e.what());
+        }
     }
 });
 
@@ -509,8 +564,33 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
         kg_pipeline_stream_handler_logger.debug("Launching tuple thread for partition " + std::to_string(i));
 
         tupleThreads.emplace_back([&, tupleBufferRef, i]() {
+            OTEL_TRACE_FUNCTION();
+
             kg_pipeline_stream_handler_logger.debug("Tuple thread started for partition " + std::to_string(i));
+            long tripleCount = 0;
+            system_clock::time_point snapShotTime = std::chrono::high_resolution_clock::now();
+            system_clock::time_point prevSnapShotTime = std::chrono::high_resolution_clock::now();
+
             while (isProcessing) {
+
+if (tripleCount % 10) {
+    prevSnapShotTime = snapShotTime;
+    snapShotTime = std::chrono::high_resolution_clock::now();
+
+    long totalTupleTimeMs =
+  std::chrono::duration_cast<std::chrono::milliseconds>(
+      snapShotTime - prevSnapShotTime).count();
+    snapShotTime = std::chrono::high_resolution_clock::now();
+
+    ScopedTracer tupleSpan(
+                               "average_tuple_entity_duplication_and_partitioning_time",
+                               {
+                                   {"time", to_string( (double) totalTupleTimeMs / 10)}
+                               });
+
+}
+                tripleCount++;
+
                     std::string line = tupleBufferRef->get();
                     kg_pipeline_stream_handler_logger.debug("Thread " + std::to_string(i) +
                                                             " processing line: " + line);
@@ -565,8 +645,18 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
                                                                 source["id"].get<std::string>() + ", destinationId: " +
                                                                 destination["id"].get<std::string>());
                         if (!sourceId.empty() && !destinationId.empty()) {
-                            partitionedEdge partitioned_edge = partitioner.addEdge({
-                            source["id"].get<std::string>(), destination["id"].get<std::string>()});
+
+                            partitionedEdge partitioned_edge;
+
+                            {
+                                std::lock_guard<std::mutex> lock(partitionerMutex);
+                                partitioned_edge = partitioner.addEdge({
+                                    source["id"].get<std::string>(),
+                                    destination["id"].get<std::string>()
+                                });
+                             }
+//                             partitionedEdge partitioned_edge = partitioner.addEdge({
+//                             source["id"].get<std::string>(), destination["id"].get<std::string>()});
                             lock.unlock();
                             int sourceIndex =  partitioned_edge[0].second;
                             int destIndex =  partitioned_edge[1].second;
@@ -617,8 +707,8 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
 
     metaThreadRunning.store(false, std::memory_order_relaxed);
 
-    if (metaThread.joinable()) {
-        metaThread.join();
+    if (metaDataThread.joinable()) {
+        metaDataThread.join();
     }
     auto endTime = high_resolution_clock::now();
     std::chrono::duration<double> duration = endTime - startTime;
@@ -632,6 +722,8 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
     graph["edgecount"] = partitions.getEdgeCount();
     graph["centralpartitioncount"] = this->numberOfPartitions;
     graph["graph_status_idgraph_status"] = Conts::GRAPH_STATUS::OPERATIONAL;
+    graph["nextNodeIndex"] = nextNodeIndex.load();
+    graph["nextEdgeIndex"] = nextEdgeIndex;
 
     meta["graph"] = graph;
     meta["partitions"] = partitions.getPartitionsMeta();
@@ -639,319 +731,404 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
 }
 
 void Pipeline::extractTuples(std::string host, int port, std::string masterIP, int graphID, int partitionId,
-                             std::queue<Chunk>& dataBuffer, SharedBuffer& sharedBuffer) {
-    bool retry  = false;
-    Chunk* retryChunk = nullptr;
-    while (true) {
-        kg_pipeline_stream_handler_logger.debug("Starting extractTuples for host: " + host + ", port: " +
-                                               std::to_string(port) + ", partitionId: " + std::to_string(partitionId));
-        char data[FED_DATA_LENGTH + 1];
-        struct sockaddr_in serv_addr;
-        struct hostent* server;
+                             std::queue<Chunk>& dataBuffer, std::shared_ptr<SharedBuffer> sharedBuffer) {
 
-        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            kg_pipeline_stream_handler_logger.error("Cannot create socket");
-            return;
-        }
-        kg_pipeline_stream_handler_logger.debug("Socket created successfully");
-
-        if (host.find('@') != std::string::npos) {
-            host = Utils::split(host, '@')[1];
-            kg_pipeline_stream_handler_logger.debug("Host after split: " + host);
-        }
-
-        server = gethostbyname(host.c_str());
-        if (!server) {
-            kg_pipeline_stream_handler_logger.error("ERROR, no host named " + host);
-            return;
-        }
-        kg_pipeline_stream_handler_logger.debug("Host resolved: " + host);
-
-        bzero((char*)&serv_addr, sizeof(serv_addr));
-        serv_addr.sin_family = AF_INET;
-        bcopy((char*)server->h_addr, (char*)&serv_addr.sin_addr.s_addr, server->h_length);
-        serv_addr.sin_port = htons(port);
-
-        if (Utils::connect_wrapper(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-            kg_pipeline_stream_handler_logger.error("Failed to connect to host: " + host +
-                                                    " on port: " + std::to_string(port));
-            return;
-        }
-        kg_pipeline_stream_handler_logger.debug("Connected to host: " + host + " on port: " + std::to_string(port));
-
-        // 1. Perform handshake
-        kg_pipeline_stream_handler_logger.debug("Performing handshake with masterIP: " + masterIP);
-        if (!Utils::performHandshake(sockfd, data, FED_DATA_LENGTH, masterIP)) {
-            kg_pipeline_stream_handler_logger.error("Handshake failed");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-        }
-        kg_pipeline_stream_handler_logger.debug("Handshake successful");
-
-        // 2. Send INITIATE_STREAMING_TUPLE_CONSTRUCTION
-        kg_pipeline_stream_handler_logger.debug("Sending INITIATE_STREAMING_TUPLE_CONSTRUCTION");
-        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-                                       JasmineGraphInstanceProtocol::INITIATE_STREAMING_TUPLE_CONSTRUCTION,
-                                       JasmineGraphInstanceProtocol::OK)) {
-            kg_pipeline_stream_handler_logger.error("Failed to initiate streaming tuple construction");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-                                       }
-        kg_pipeline_stream_handler_logger.debug("INITIATE_STREAMING_TUPLE_CONSTRUCTION successful");
-
-        // 3. Send graph ID
-        kg_pipeline_stream_handler_logger.debug("Sending graphID: " + std::to_string(graphID));
-        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, std::to_string(graphID),
-                                       JasmineGraphInstanceProtocol::OK)) {
-            kg_pipeline_stream_handler_logger.error("Failed to send graphID");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-                                       }
-        kg_pipeline_stream_handler_logger.debug("GraphID sent successfully");
-
-        // 3. Send LLM runner debug
-        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llmRunners[partitionId],
-                                       JasmineGraphInstanceProtocol::OK)) {
-            kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-                                       }
-        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llmInferenceEngine,
-                                       JasmineGraphInstanceProtocol::OK)) {
-            kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-                                       }
-        kg_pipeline_stream_handler_logger.debug("LLM runner sent successfully");
-
-        // 3. Send LLM  info
-        if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llm, JasmineGraphInstanceProtocol::OK)) {
-            kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-            close(sockfd);
-            return;
-        }
-        kg_pipeline_stream_handler_logger.info("LLM model name sent successfully");
-        // Streaming loop
+    try {
+        bool retry  = false;
+        Chunk retryChunk ;
         while (true) {
-            if (stopFlag) {
-                kg_pipeline_stream_handler_logger.info("Received END_OF_STREAM_MARKER for partitionId: " +
-                                                       std::to_string(partitionId));
-                if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-                                               JasmineGraphInstanceProtocol::CHUNK_STREAM_END,
-                                               JasmineGraphInstanceProtocol::OK)) {
-                    kg_pipeline_stream_handler_logger.error("Failed to send END_OF_STREAM");
-                                               }
-                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-                kg_pipeline_stream_handler_logger.info("Closed connection for partitionId: " +
-                    std::to_string(partitionId));
-                sharedBuffer.add(END_OF_STREAM_MARKER);
-                close(sockfd);
-                break;
+            kg_pipeline_stream_handler_logger.debug("Starting extractTuples for host: " + host + ", port: " +
+                                                   std::to_string(port) + ", partitionId: " + std::to_string(partitionId));
+            char data[FED_DATA_LENGTH + 1];
+            struct sockaddr_in serv_addr;
+            struct hostent* server;
+
+            int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            if (sockfd < 0) {
+                kg_pipeline_stream_handler_logger.error("Cannot create socket");
+                return;
             }
-            std::string chunk;
+            kg_pipeline_stream_handler_logger.debug("Socket created successfully");
 
-            std::unique_lock<std::mutex> lock(dataBufferMutex);
-            dataBufferCV.wait(lock, [this, &dataBuffer] { return !dataBuffer.empty() ||
-                !this->isReading; });
-
-            Chunk chunkData = dataBuffer.front();
-            chunk = chunkData.text;
-
-            dataBuffer.pop();
-
-            kg_pipeline_stream_handler_logger.info("Processing chunk for partitionId: " +
-                std::to_string(partitionId));
-            lock.unlock();
-            dataBufferCV.notify_all();
-
-            if (chunk == END_OF_STREAM_MARKER) {
-                kg_pipeline_stream_handler_logger.info("Received END_OF_STREAM_MARKER for partitionId: " +
-                                                       std::to_string(partitionId));
-                if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-                                               JasmineGraphInstanceProtocol::CHUNK_STREAM_END,
-                                               JasmineGraphInstanceProtocol::OK)) {
-                    kg_pipeline_stream_handler_logger.error("Failed to send END_OF_STREAM");
-                                               }
-                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-                kg_pipeline_stream_handler_logger.info("Closed connection for partitionId: " +
-                    std::to_string(partitionId));
-                sharedBuffer.add(END_OF_STREAM_MARKER);
-                close(sockfd);
-                break;  // Exit loop if end of stream marker is received
+            if (host.find('@') != std::string::npos) {
+                host = Utils::split(host, '@')[1];
+                kg_pipeline_stream_handler_logger.debug("Host after split: " + host);
             }
-            // Send chunk
-            kg_pipeline_stream_handler_logger.info("Sending QUERY_DATA_START for chunk of size: " +
-                                                   std::to_string(chunk.length()));
+
+            server = gethostbyname(host.c_str());
+            if (!server) {
+                kg_pipeline_stream_handler_logger.error("ERROR, no host named " + host);
+                return;
+            }
+            kg_pipeline_stream_handler_logger.debug("Host resolved: " + host);
+
+            bzero((char*)&serv_addr, sizeof(serv_addr));
+            serv_addr.sin_family = AF_INET;
+            bcopy((char*)server->h_addr, (char*)&serv_addr.sin_addr.s_addr, server->h_length);
+            serv_addr.sin_port = htons(port);
+
+            if (Utils::connect_wrapper(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+                kg_pipeline_stream_handler_logger.error("Failed to connect to host: " + host +
+                                                        " on port: " + std::to_string(port));
+                return;
+            }
+            kg_pipeline_stream_handler_logger.debug("Connected to host: " + host + " on port: " + std::to_string(port));
+
+            // 1. Perform handshake
+            kg_pipeline_stream_handler_logger.debug("Performing handshake with masterIP: " + masterIP);
+            if (!Utils::performHandshake(sockfd, data, FED_DATA_LENGTH, masterIP)) {
+                kg_pipeline_stream_handler_logger.error("Handshake failed");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
+            }
+            kg_pipeline_stream_handler_logger.debug("Handshake successful");
+
+            // 2. Send INITIATE_STREAMING_TUPLE_CONSTRUCTION
+            kg_pipeline_stream_handler_logger.debug("Sending INITIATE_STREAMING_TUPLE_CONSTRUCTION");
             if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-                                           JasmineGraphInstanceProtocol::QUERY_DATA_START,
+                                           JasmineGraphInstanceProtocol::INITIATE_STREAMING_TUPLE_CONSTRUCTION,
                                            JasmineGraphInstanceProtocol::OK)) {
-                kg_pipeline_stream_handler_logger.error("Failed to send QUERY_DATA_START");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
+                kg_pipeline_stream_handler_logger.error("Failed to initiate streaming tuple construction");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
                                            }
+            kg_pipeline_stream_handler_logger.debug("INITIATE_STREAMING_TUPLE_CONSTRUCTION successful");
 
-            char ack3[ACK_MESSAGE_SIZE] = {0};
-            int converted_number = htonl(chunk.length());
-            kg_pipeline_stream_handler_logger.debug("Sending chunk length: " +
-                std::to_string(chunk.length()));
-            if (!Utils::sendIntExpectResponse(sockfd, ack3,
-                                              JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
-                                              converted_number,
-                                              JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
-                kg_pipeline_stream_handler_logger.error("Failed to send chunk length");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
-                                              }
+            // 3. Send graph ID
+            kg_pipeline_stream_handler_logger.debug("Sending graphID: " + std::to_string(graphID));
+            if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, std::to_string(graphID),
+                                           JasmineGraphInstanceProtocol::OK)) {
+                kg_pipeline_stream_handler_logger.error("Failed to send graphID");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
+                                           }
+            kg_pipeline_stream_handler_logger.debug("GraphID sent successfully");
 
-            kg_pipeline_stream_handler_logger.debug("Sending chunk data");
-            if (!Utils::send_str_wrapper(sockfd, chunk)) {
-                kg_pipeline_stream_handler_logger.error("Failed to send chunk data");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
+            // 3. Send LLM runner debug
+            if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llmRunners[partitionId],
+                                           JasmineGraphInstanceProtocol::OK)) {
+                kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
+                                           }
+            if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llmInferenceEngine,
+                                           JasmineGraphInstanceProtocol::OK)) {
+                kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
+                                           }
+            kg_pipeline_stream_handler_logger.debug("LLM runner information sent");
+
+            // 3. Send LLM  info
+            if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, llm, JasmineGraphInstanceProtocol::OK)) {
+                kg_pipeline_stream_handler_logger.error("Failed to send LLM runner info");
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                close(sockfd);
+                return;
             }
-            Utils::expect_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
-
-
-            char ack4[ACK_MESSAGE_SIZE] = {0};
-            converted_number = htonl(currentTraceContext.length());
-            kg_pipeline_stream_handler_logger.debug("Sending currentTraceContext length: " + std::to_string
-                (currentTraceContext.length()));
-            if (!Utils::sendIntExpectResponse(sockfd, ack3,
-                                              JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
-                                              converted_number,
-                                              JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
-                kg_pipeline_stream_handler_logger.error("Failed to send chunk length");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
-                                              }
-
-            kg_pipeline_stream_handler_logger.debug("Sending currentTraceContext data: " + currentTraceContext);
-            if (!Utils::send_str_wrapper(sockfd, currentTraceContext)) {
-                kg_pipeline_stream_handler_logger.error("Failed to send chunk data");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
-            }
-
-            // Receive tuple from server
-            kg_pipeline_stream_handler_logger.debug("Waiting for QUERY_DATA_START from server");
-            if (!Utils::expect_str_wrapper(sockfd, JasmineGraphInstanceProtocol::QUERY_DATA_START)) {
-                kg_pipeline_stream_handler_logger.error("Did not receive QUERY_DATA_START from server");
-                retry = true;
-                retryChunk = &chunkData;
-                break;
-            }
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::OK);
-
-
-            int tuple_count = 0;  // to provide realtime updates
+            kg_pipeline_stream_handler_logger.info("LLM  sent successfully");
+            // Streaming loop
             while (true) {
-                int tuple_length_net;
-                ssize_t ret = recv(sockfd, &tuple_length_net, sizeof(int), 0);
-                if (ret <= 0) {
-                    kg_pipeline_stream_handler_logger.error("Failed to receive tuple length, closing stream");
-                    retry = true;
-                    retryChunk = &chunkData;
-                    break;
-                }
-
-                int tuple_length = ntohl(tuple_length_net);
-
-                // ✅ Sanity checks
-                if (tuple_length <= 0 || tuple_length > 10 * 1024 * 1024) {
-                    // limit to 10MB
-                    kg_pipeline_stream_handler_logger.error("Invalid tuple length: " + std::to_string(tuple_length));
-                    retry = true;
-                    retryChunk = &chunkData;
-                    break;
-                }
-
-                kg_pipeline_stream_handler_logger.debug("Received tuple length: " + std::to_string(tuple_length) +
-                                                       " from: " + std::to_string(partitionId));
-                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
-
-                std::string tuple(tuple_length, 0);
-                size_t received = 0;
-                while (received < static_cast<size_t>(tuple_length)) {
-                    ret = recv(sockfd, &tuple[received], tuple_length - received, 0);
-                    if (ret <= 0) {
-                        kg_pipeline_stream_handler_logger.error("Error receiving tuple data");
-                        retry = true;
-                        retryChunk = &chunkData;
-                        break;
-                    }
-                    received += ret;
-                }
-
-                if (received != static_cast<size_t>(tuple_length)) {
-                    kg_pipeline_stream_handler_logger.error("Incomplete tuple received, expected " +
-                                                            std::to_string(tuple_length) + " but got " +
-                                                            std::to_string(received));
-                    break;
-                }
                 if (stopFlag) {
-                    Utils::send_str_wrapper(sockfd, "stop");
-                } else {
-                    Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
+                    kg_pipeline_stream_handler_logger.info("Received END_OF_STREAM_MARKER for partitionId: " +
+                                                           std::to_string(partitionId));
+                    if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
+                                                   JasmineGraphInstanceProtocol::CHUNK_STREAM_END,
+                                                   JasmineGraphInstanceProtocol::OK)) {
+                        kg_pipeline_stream_handler_logger.error("Failed to send END_OF_STREAM");
+                                                   }
+                    Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                    kg_pipeline_stream_handler_logger.info("Closed connection for partitionId: " +
+                        std::to_string(partitionId));
+                    kg_pipeline_stream_handler_logger.info("Tuple extractor shared buffer size: " +
+                        to_string(sharedBuffer->size()));
+                    sharedBuffer->add(END_OF_STREAM_MARKER);
+                    close(sockfd);
+                    break;
                 }
+                std::string chunk;
+                kg_pipeline_stream_handler_logger.debug("763");
 
-                if (tuple == END_OF_STREAM_MARKER) {
-                    kg_pipeline_stream_handler_logger.debug("Received END_OF_STREAM_MARKER 700");
-                    realTimeBytesMutex.lock();
-                    bytes_read_so_far += chunkData.chunk_size;
-                    realtime_bytes_read_so_far = bytes_read_so_far;
-                    realTimeBytesMutex.unlock();
+                std::unique_lock<std::mutex> lock(dataBufferMutex);
+                kg_pipeline_stream_handler_logger.debug("775");
+
+                dataBufferCV.wait(lock, [this, &dataBuffer] { return !dataBuffer.empty() ||
+                    !this->isReading; });
+                kg_pipeline_stream_handler_logger.debug("779");
+
+                if (dataBuffer.empty()) {
+                    // No data available and reader finished -> signal end and stop this extractor
+                    kg_pipeline_stream_handler_logger.debug("773");
+
+                    lock.unlock();
+                    sharedBuffer->add(END_OF_STREAM_MARKER);
+                    close(sockfd);
+                    break;
+
+                }
+                kg_pipeline_stream_handler_logger.debug("776");
+
+                Chunk chunkData ;
+                if (retry) {
+                    chunkData = retryChunk;
+                    retry = false;
+                } else {
+                    chunkData = dataBuffer.front();
+                    dataBuffer.pop();
+                }
+                // kg_pipeline_stream_handler_logger.debug("data buffer size" + to_string(dataBuffer.size()) );
+
+                chunk = chunkData.text;
+                kg_pipeline_stream_handler_logger.debug("778");
+                // dataBuffer.pop();
+
+                kg_pipeline_stream_handler_logger.debug("Processing chunk for partitionId: " +
+                std::to_string(partitionId));
+                lock.unlock();
+                dataBufferCV.notify_all();
+
+                if (chunk == END_OF_STREAM_MARKER) {
+                    kg_pipeline_stream_handler_logger.debug("Received END_OF_STREAM_MARKER for partitionId: " +
+                                                           std::to_string(partitionId));
+                    if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
+                                                   JasmineGraphInstanceProtocol::CHUNK_STREAM_END,
+                                                   JasmineGraphInstanceProtocol::OK)) {
+                        kg_pipeline_stream_handler_logger.error("Failed to send END_OF_STREAM");
+                                                   }
+                    Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+                    kg_pipeline_stream_handler_logger.debug("Closed connection for partitionId: " +
+                        std::to_string(partitionId));
+                    sharedBuffer->add(END_OF_STREAM_MARKER);
+                    close(sockfd);
+                    break;  // Exit loop if end of stream marker is received
+                }
+                // Send chunk
+                kg_pipeline_stream_handler_logger.debug("Sending QUERY_DATA_START for chunk of size: " +
+                                                       std::to_string(chunk.length()));
+                if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
+                                               JasmineGraphInstanceProtocol::QUERY_DATA_START,
+                                               JasmineGraphInstanceProtocol::OK)) {
+                    kg_pipeline_stream_handler_logger.error("Failed to send QUERY_DATA_START");
+                    retry = true;
+                    retryChunk = chunkData;
+                    break;
+                                               }
+
+                char chunkLengthBuffer[ACK_MESSAGE_SIZE] = {0};
+                int converted_number = htonl(chunk.length());
+                kg_pipeline_stream_handler_logger.debug("Sending chunk length: " +
+                    std::to_string(chunk.length()));
+                if (!Utils::sendIntExpectResponse(sockfd, chunkLengthBuffer,
+                                                  JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
+                                                  converted_number,
+                                                  JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
+                    kg_pipeline_stream_handler_logger.error("Failed to send chunk length");
+                    retry = true;
+                    retryChunk = chunkData;
+                    break;
+                                                  }
+
+                kg_pipeline_stream_handler_logger.debug("Sending chunk data");
+                if (!Utils::send_str_wrapper(sockfd, chunk)) {
+                    kg_pipeline_stream_handler_logger.error("Failed to send chunk data");
+                    retry = true;
+                    retryChunk = chunkData;
+                    break;
+                }
+                Utils::expect_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
 
 
+                char contextTraceContextBuffer[ACK_MESSAGE_SIZE] = {0};
+                converted_number = htonl(currentTraceContext.length());
+                kg_pipeline_stream_handler_logger.debug("Sending currentTraceContext length: " + std::to_string
+                    (currentTraceContext.length()));
+                if (!Utils::sendIntExpectResponse(sockfd, chunkLengthBuffer,
+                                                  JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK.length(),
+                                                  converted_number,
+                                                  JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK)) {
+                    kg_pipeline_stream_handler_logger.error("Failed to send chunk length");
+                    retry = true;
+                    retryChunk = chunkData;
+                    break;
+                                                  }
+
+                kg_pipeline_stream_handler_logger.debug("Sending currentTraceContext data:" +currentTraceContext);
+                if (!Utils::send_str_wrapper(sockfd, currentTraceContext)) {
+                    kg_pipeline_stream_handler_logger.error("Failed to send chunk data");
+                    retry = true;
+                    retryChunk = chunkData;
                     break;
                 }
 
-                tuple_count++;
-                if (tuple_count % 100 == 0) {
-                    realTimeBytesMutex.lock();
-                    realtime_bytes_read_so_far += (static_cast<long>(std::stod(chunkSize) * 0.2));
-                    realTimeBytesMutex.unlock();
+                // Receive tuple from server
+                kg_pipeline_stream_handler_logger.debug("Waiting for QUERY_DATA_START from server");
+                if (!Utils::expect_str_wrapper(sockfd, JasmineGraphInstanceProtocol::QUERY_DATA_START)) {
+                    kg_pipeline_stream_handler_logger.error("Did not receive QUERY_DATA_START from server");
+                    retry = true;
+                    retryChunk = chunkData;
+                    break;
                 }
-                // Check for non-UTF8 safely
-                if (!std::regex_search(tuple, std::regex(R"([^\x20-\x7E])"))) {
-                    // Log only if it looks printable ASCII
-                    kg_pipeline_stream_handler_logger.debug("Tuple: " + tuple);
-                } else {
-                    // Hex dump instead of logging raw binary
-                    std::ostringstream hexStream;
-                    for (unsigned char c : tuple) {
-                        hexStream << std::hex << std::setw(2) << std::setfill('0') << (int)c;
-                    }
-                    kg_pipeline_stream_handler_logger.error("Tuple contains non-printable data (hex): " + tuple);
-                }
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::OK);
 
-                sharedBuffer.add(tuple);
+
+                int tuple_count = 0;  // to provide realtime updates
+                while (true) {
+                    try {
+                        kg_pipeline_stream_handler_logger.debug("882");
+
+
+
+
+                        int tuple_length_net;
+                        ssize_t ret = 0;
+                        size_t to_read = sizeof(int);
+                        char* p = reinterpret_cast<char*>(&tuple_length_net);
+                        // kg_pipeline_stream_handler_logger.debug("889");
+
+                        while (to_read > 0) {
+                            ret = recv(sockfd, p + (sizeof(int) - to_read), to_read, 0);
+                            if (ret < 0) {
+                                // kg_pipeline_stream_handler_logger.debug("894");
+
+                                if (errno == EINTR) {
+                                    kg_pipeline_stream_handler_logger.error(std::string("Failed to receive tuple length: ") + strerror(errno));
+
+                                    continue; // interrupted, retry
+                                }
+                                kg_pipeline_stream_handler_logger.error(std::string("Failed to receive tuple length: ") + strerror(errno));
+                                retry = true;
+                                retryChunk = chunkData;
+                                // kg_pipeline_stream_handler_logger.debug("904");
+                                break;
+                            } else if (ret == 0) {
+                                kg_pipeline_stream_handler_logger.error("Peer closed connection while reading tuple length");
+                                retry = true;
+                                retryChunk = chunkData;
+                                break;
+                            }
+                            to_read -= static_cast<size_t>(ret);
+                        }
+                        kg_pipeline_stream_handler_logger.debug("907");
+
+                        if (retry) {
+                            break;
+                        }
+                        kg_pipeline_stream_handler_logger.debug("875");
+
+                        int tuple_length = ntohl(tuple_length_net);
+
+                        // ? Sanity checks
+                        if (tuple_length <= 0 || tuple_length > 10 * 1024 * 1024) {
+                            // limit to 10MB
+                            kg_pipeline_stream_handler_logger.error("Invalid tuple length: " + std::to_string(tuple_length));
+                            retry = true;
+                            retryChunk = chunkData;
+                            break;
+                        }
+
+                        kg_pipeline_stream_handler_logger.debug("Received tuple length: " + std::to_string(tuple_length) +
+                                                               " from: " + std::to_string(partitionId));
+                        Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_STREAM_C_length_ACK);
+                        kg_pipeline_stream_handler_logger.debug("887");
+
+                        std::string tuple(tuple_length, 0);
+                        size_t received = 0;
+                        while (received < static_cast<size_t>(tuple_length)) {
+                            ret = recv(sockfd, &tuple[received], tuple_length - received, 0);
+                            if (ret <= 0) {
+                                kg_pipeline_stream_handler_logger.error("Error receiving tuple data");
+                                retry = true;
+                                retryChunk = chunkData;
+                                break;
+                            }
+                            received += ret;
+                        }
+
+                        // kg_pipeline_stream_handler_logger.debug("902");
+
+                        if (received != static_cast<size_t>(tuple_length)) {
+                            kg_pipeline_stream_handler_logger.error("Incomplete tuple received, expected " +
+                                                                    std::to_string(tuple_length) + " but got " +
+                                                                    std::to_string(received));
+                            break;
+                        }
+                        kg_pipeline_stream_handler_logger.debug("910");
+                        if (stopFlag) {
+                            Utils::send_str_wrapper(sockfd, "stop");
+                            kg_pipeline_stream_handler_logger.debug("913");
+
+                        } else {
+                            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::GRAPH_DATA_SUCCESS);
+                            kg_pipeline_stream_handler_logger.debug("917");
+
+                        }
+                        kg_pipeline_stream_handler_logger.debug("916");
+
+                        if (tuple == END_OF_STREAM_MARKER) {
+                            kg_pipeline_stream_handler_logger.debug("Received END_OF_STREAM_MARKER 700");
+                            realTimeBytesMutex.lock();
+                            bytes_read_so_far += chunkData.chunk_size;
+                            realtime_bytes_read_so_far = bytes_read_so_far;
+                            realTimeBytesMutex.unlock();
+                            kg_pipeline_stream_handler_logger.info("Tuple extractor shared buffer size: " +
+                    to_string(sharedBuffer->size()));
+
+
+                            break;
+                        }
+
+                        tuple_count++;
+                        // if (tuple_count % 100 == 0) {
+                        //     realTimeBytesMutex.lock();
+                        //     realtime_bytes_read_so_far += (static_cast<long>(std::stod(chunkSize) * 0.2));
+                        //     realTimeBytesMutex.unlock();
+                        // }
+                        if (!std::regex_search(tuple, std::regex(R"([^\x20-\x7E])"))) {
+                            // Log only if it looks printable ASCII
+                            kg_pipeline_stream_handler_logger.debug("Tuple: " + tuple);
+                        } else {
+                            // Hex dump instead of logging raw binary
+                            std::ostringstream hexStream;
+                            for (unsigned char c : tuple) {
+                                hexStream << std::hex << std::setw(2) << std::setfill('0') << (int)c;
+                            }
+                            kg_pipeline_stream_handler_logger.error("Tuple contains non-printable data (hex): " + tuple);
+                        }
+                        kg_pipeline_stream_handler_logger.debug("951");
+
+                        sharedBuffer->add(tuple);
+
+                        kg_pipeline_stream_handler_logger.debug("954");
+                    } catch (exception& e) {
+                        kg_pipeline_stream_handler_logger.error("Unexpected Error occured");
+                        kg_pipeline_stream_handler_logger.error(std::string(e.what()));
+                    }
+
+                }
+            }
+
+            kg_pipeline_stream_handler_logger.debug("Closing connection for partitionId: " + std::to_string(partitionId));
+    close(sockfd);
+            if (!retry) {
+                kg_pipeline_stream_handler_logger.warn("Tuple Extraction process terminated unexpectedly, Retrying "
+                                                       "Again");
+                break;
             }
         }
+    } catch (exception& e) {
+        kg_pipeline_stream_handler_logger.error("Unexpected Error Occurred: " + std::string(e.what()));
 
-        kg_pipeline_stream_handler_logger.debug("Closing connection for partitionId: " + std::to_string(partitionId));
-        if (!retry) {
-            kg_pipeline_stream_handler_logger.warn("Tuple Extraction process terminated unexpectedly, Retrying "
-                                                   "Again");
-            break;
-        }
     }
 }
 
 bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::string masterIP, std::string graphId,
                                              int numberOfPartitions, std::string hdfsServerIp, std::string hdfsPort,
-                                             std::string hostNamePort, std::string llmInferenceEngine, std::string llm,
+                                             std::string hostnamePort, std::string llmInferenceEngine, std::string llm,
                                              std::string chunkSize, std::string hdfsFilePath,
                                              bool continueKGConstruction, SQLiteDBInterface* sqlite,
                                              shared_ptr<atomic<bool>>& stopFlag,
@@ -1021,7 +1198,7 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
 
 
     std::vector<std::string> llmRunnerSockets;
-    std::stringstream ss(hostNamePort);
+    std::stringstream ss(hostnamePort);
     std::string entry;
 
     while (std::getline(ss, entry, ',')) {
@@ -1061,10 +1238,70 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
     } else {
         workerCount = llmRunnerSockets.size();
     }
-    std::unordered_map<std::string, int> workerCountMap;
+    std::unordered_map<std::string, std::vector<JasmineGraphServer::worker>> hostToWorkers;
 
     auto workerList = JasmineGraphServer::getWorkers(workerCount);
 
+    // Step 1: Group workers by hostname
+    for (const auto &worker : workerList) {
+        hostToWorkers[worker.hostname].push_back(worker);
+    }
+
+    // Step 2: Convert hostnames to vector for indexing
+    std::vector<std::string> uniqueHosts;
+    for (const auto &entry : hostToWorkers) {
+        uniqueHosts.push_back(entry.first);
+    }
+
+    std::vector<std::string> partitionWorkerMapping;
+
+    int hostCount = uniqueHosts.size();
+
+    for (int partitionId = 0; partitionId < numberOfPartitions; partitionId++) {
+
+        // Step 3: Round robin over hosts
+        std::string selectedHost = uniqueHosts[partitionId % hostCount];
+
+        // Step 4: Pick a worker inside that host
+        auto &workersOnHost = hostToWorkers[selectedHost];
+
+        // If multiple workers per machine, rotate among them
+        const auto &worker =
+            workersOnHost[(partitionId / hostCount) % workersOnHost.size()];
+
+        // Insert mapping
+        std::string insertMapping =
+            "INSERT INTO worker_has_partition "
+            "(worker_idworker, partition_idpartition, partition_graph_idgraph) "
+            "VALUES (" + std::to_string(worker.workerId) + ", " +
+            std::to_string(partitionId) + ", " + graphId + ");";
+
+        sqlite->runInsert(insertMapping);
+
+        partitionWorkerMapping.push_back(
+            worker.hostname + ":" +
+            std::to_string(worker.port) + ":" +
+            std::to_string(worker.dataPort)
+        );
+
+        kg_pipeline_stream_handler_logger.info(
+            "Assigned Partition " + std::to_string(partitionId) +
+            " to Host " + worker.hostname +
+            " Worker ID " + std::to_string(worker.workerId)
+        );
+    }
+
+    // --- convert to comma-separated string ---
+    std::string workersParitionMapping;
+    for (size_t i = 0; i < partitionWorkerMapping.size(); i++) {
+        workersParitionMapping += partitionWorkerMapping[i];
+        if (i < partitionWorkerMapping.size() - 1) {
+            workersParitionMapping += ",";
+        }
+    }
+    std::unordered_map<std::string, int> workerCountMap;
+    // Now workersParitionMapping can be sent to the worker
+    kg_pipeline_stream_handler_logger.info("Partition-to-worker mapping: " + workersParitionMapping);
     // First pass: count occurrences of each worker (hostname + port)
     for (const auto &worker : workerList) {
         std::string key = worker.hostname + ":" +
@@ -1099,17 +1336,29 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
     if (continueKGConstruction) {
         kg_pipeline_stream_handler_logger.debug("KG construction is continued");
         long upload_bytes;
-        std::string query = "SELECT uploaded_bytes FROM graph WHERE idgraph = " + graphId + ";";
+        long nextNodeIndex;
+        long nextEdgeIndex;
+        std::string query = "SELECT uploaded_bytes, nextNodeIndex, nextEdgeIndex  FROM graph WHERE idgraph = " + graphId + ";";
         auto result = sqlite->runSelect(query);
 
         if (result.empty() || result[0].empty()) {
             // No record found
             upload_bytes = 0;
         }
+        if (result.empty() || result[1].empty()) {
+            // No record found
+            nextNodeIndex = 0;
+        }
+        if (result.empty() || result[2].empty()) {
+            // No record found
+            nextEdgeIndex = 0;
+        }
 
         try {
             kg_pipeline_stream_handler_logger.debug(result[0][0].second);
             upload_bytes = std::stoi(result[0][0].second);
+            nextNodeIndex = std::stoi(result[0][1].second);
+            nextEdgeIndex = std::stoi(result[0][2].second);
             kg_pipeline_stream_handler_logger.debug("uploaded bytes: " + std::to_string(upload_bytes));
         } catch (std::exception& e) {
             kg_pipeline_stream_handler_logger.debug(e.what());
@@ -1123,6 +1372,16 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
             close(sockfd);
             return false;
         }
+
+        if (!sendAndExpect(std::to_string(nextNodeIndex), "ok")) {
+            close(sockfd);
+            return false;
+        }
+
+        if (!sendAndExpect(std::to_string(nextEdgeIndex), "ok")) {
+            close(sockfd);
+            return false;
+        }
     } else {
         if (!sendAndExpect("n", "ok")) {
             close(sockfd);
@@ -1130,7 +1389,7 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
         }
     }
 
-    if (!sendAndExpect(hostNamePort, "ok")) {
+    if (!sendAndExpect(hostnamePort, "ok")) {
         close(sockfd);
         return false;
     }
@@ -1171,9 +1430,66 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
         close(sockfd);
         return false;
     }
+    if (!sendAndExpect(workersParitionMapping, "ok")) {
+        close(sockfd);
+        return false;
+    }
     if (!sendAndExpect(hdfsFilePath, "ok")) {
         close(sockfd);
         return false;
+    }
+    struct GraphMeta {
+        long vertexCount = 0;
+        long edgeCount = 0;
+        long centralPartitionCount = 0;
+        long graphStatus = 0;
+    };
+
+    struct PartitionMeta {
+        long vertexCount = 0;
+        long centralVertexCount = 0;
+        long edgeCount = 0;
+        long centralEdgeCountWithDups = 0;
+        long centralEdgeCount = 0;
+    };
+
+    GraphMeta graphMeta;
+    std::unordered_map<int, PartitionMeta> partitionMetaMap;
+    if (continueKGConstruction) {
+        kg_pipeline_stream_handler_logger.debug("Loading existing metadata from DB");
+
+        std::string graphQuery =
+            "SELECT vertexcount, edgecount, centralpartitioncount, graph_status_idgraph_status "
+            "FROM graph WHERE idgraph = " + graphId + ";";
+
+        auto graphResult = sqlite->runSelect(graphQuery);
+
+        if (!graphResult.empty()) {
+            graphMeta.vertexCount = std::stoll(graphResult[0][0].second);
+            graphMeta.edgeCount = std::stoll(graphResult[0][1].second);
+            graphMeta.centralPartitionCount = std::stoll(graphResult[0][2].second);
+            graphMeta.graphStatus = std::stoll(graphResult[0][3].second);
+        }
+
+        std::string partitionQuery =
+            "SELECT idpartition, vertexcount, central_vertexcount, edgecount, "
+            "central_edgecount_with_dups, central_edgecount "
+            "FROM partition WHERE graph_idgraph = " + graphId + ";";
+
+        auto partitionResult = sqlite->runSelect(partitionQuery);
+
+        for (auto &row : partitionResult) {
+            int pid = std::stoi(row[0].second);
+
+            PartitionMeta p;
+            p.vertexCount = std::stoll(row[1].second);
+            p.centralVertexCount = std::stoll(row[2].second);
+            p.edgeCount = std::stoll(row[3].second);
+            p.centralEdgeCountWithDups = std::stoll(row[4].second);
+            p.centralEdgeCount = std::stoll(row[5].second);
+
+            partitionMetaMap[pid] = p;
+        }
     }
     char buffer[1024];
     long previousEdgeCount = 0;
@@ -1183,127 +1499,175 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
 
     int totalReceivedBytes = 0;
     while (true) {
-        kg_pipeline_stream_handler_logger.debug("Waiting for data...");
-        bzero(buffer, sizeof(buffer));
-        int bytes = recv(sockfd, buffer, sizeof(buffer), 0);
-        if (bytes <= 0) break;
+        try {
+            kg_pipeline_stream_handler_logger.debug("Waiting for data...");
+            bzero(buffer, sizeof(buffer));
+            int bytes = recv(sockfd, buffer, sizeof(buffer), 0);
+            if (bytes <= 0) break;
 
-        std::string msg(buffer, bytes);
-        msg = Utils::trim_copy(msg);
+            std::string msg(buffer, bytes);
+            msg = Utils::trim_copy(msg);
 
-        if (msg == "meta") {
-            Utils::send_str_wrapper(sockfd, "ok");
-            int content_length;
-            recv(sockfd, &content_length, sizeof(int), 0);
-            content_length = ntohl(content_length);
-            Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::OK);
-            kg_pipeline_stream_handler_logger.debug("Received content length: " + std::to_string(content_length));
+            if (msg == "meta") {
+                Utils::send_str_wrapper(sockfd, "ok");
+                int content_length;
+                recv(sockfd, &content_length, sizeof(int), 0);
+                content_length = ntohl(content_length);
+                Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::OK);
+                kg_pipeline_stream_handler_logger.debug("Received content length: " + std::to_string(content_length));
 
-            std::string meta(content_length, 0);
-            recv(sockfd, &meta[0], content_length, 0);
-            kg_pipeline_stream_handler_logger.debug("Received meta data: " + meta);
+                std::string meta(content_length, 0);
+                recv(sockfd, &meta[0], content_length, 0);
+                kg_pipeline_stream_handler_logger.debug("Received meta data: " + meta);
 
-            json metaJSON = json::parse(meta);
-            json graph = metaJSON["graph"];
+                json metaJSON = json::parse(meta);
+                json graph = metaJSON["graph"];
 
-            std::string sqlStatement =
-                "UPDATE graph SET vertexcount = '" + graph["vertexcount"].dump() + "', centralpartitioncount = '" +
-                graph["centralpartitioncount"].dump() + "', edgecount = '" + graph["edgecount"].dump() +
-                "', graph_status_idgraph_status = '" + graph["graph_status_idgraph_status"].dump() +
-                "' WHERE idgraph = '" + graphId + "'";
+                long newVertexCount = graph["vertexcount"].get<long>();
+                long newEdgeCount = graph["edgecount"].get<long>();
+                long newCentralPartitionCount = graph["centralpartitioncount"].get<long>();
+                int newGraphStatus = graph["graph_status_idgraph_status"].get<int>();
 
-            dbLock.lock();
-            sqlite->runUpdate(sqlStatement);
+                if (continueKGConstruction) {
+                     newVertexCount =  graphMeta.vertexCount + newVertexCount;
+                     newEdgeCount = graphMeta.edgeCount + newEdgeCount;
+                     newCentralPartitionCount = graphMeta.centralPartitionCount + newCentralPartitionCount;
 
-            long long edgeCount = 0;
-            if (graph.contains("edgecount") && graph["edgecount"].is_number()) {
-                edgeCount = graph["edgecount"].get<long long>();
-            } else if (graph.contains("edgecount")) {
-                // fallback: try as string then stoll
-                edgeCount = std::stoll(graph["edgecount"].get<std::string>());
-            }
 
-            auto now = std::chrono::steady_clock::now();
-            std::chrono::duration<double> elapsed_seconds = now - previousTimeStampTriplesPerSecond;
-            double elapsed = elapsed_seconds.count();
-
-            if (elapsed > Conts::TIME_ELAPSED_LOWER_BOUND_SECONDS) {
-                kgConstructionRates->triplesPerSecond =
-                    static_cast<double>(edgeCount - previousEdgeCount) / elapsed;
-            }
-
-            previousEdgeCount = edgeCount;
-            previousTimeStampTriplesPerSecond = now;
-            json partitions = metaJSON["partitions"];
-
-            for (auto partition : partitions) {
-                kg_pipeline_stream_handler_logger.debug(partition.dump());
+                }
 
                 std::string sqlStatement =
-                    "UPDATE partition SET "
-                    "vertexcount = " +
-                    partition["vertexcount"].dump() +
-                    ", "
-                    "central_vertexcount = " +
-                    partition["central_vertexcount"].dump() +
-                    ", "
-                    "edgecount = " +
-                    partition["edgecount"].dump() +
-                    ", "
-                    "central_edgecount_with_dups = " +
-                    partition["central_edgecount_with_dups"].dump() +
-                    ", "
-                    "central_edgecount = " +
-                    partition["central_edgecount"].dump() + " WHERE idpartition = " + partition["idpartition"].dump() +
-                    " AND graph_idgraph = " + partition["graph_idgraph"].dump() +
-                    "; "
-                    "INSERT INTO partition (idpartition, graph_idgraph, vertexcount, "
-                    "central_vertexcount, "
-                    "edgecount, central_edgecount_with_dups, central_edgecount) "
-                    "SELECT " +
-                    partition["idpartition"].dump() + ", " + partition["graph_idgraph"].dump() + ", " +
-                    partition["vertexcount"].dump() + ", " + partition["central_vertexcount"].dump() + ", " +
-                    partition["edgecount"].dump() + ", " + partition["central_edgecount_with_dups"].dump() + ", " +
-                    partition["central_edgecount"].dump() + " WHERE (SELECT changes() = 0)";
-                int result = sqlite->runInsert(sqlStatement);
-            }
+                    "UPDATE graph SET vertexcount = '" + std::to_string(newVertexCount) +
+                    "', centralpartitioncount = '" + std::to_string(newCentralPartitionCount) +
+                    "', edgecount = '" + std::to_string(newEdgeCount) +
+                        "', nextNodeIndex = '" + std::to_string( graph["nextNodeIndex"].get<long long>()) +
+                            "', nextEdgeIndex = '" + std::to_string(graph["nextEdgeIndex"].get<long long>()) +
+                    "', graph_status_idgraph_status = '" +  std::to_string(newGraphStatus) +
+                    "' WHERE idgraph = '" + graphId + "'";
 
-            dbLock.unlock();
-        } else if (msg == "done") {
-            Utils::send_str_wrapper(sockfd, "ok");
-
-            kg_pipeline_stream_handler_logger.debug("Worker completed streaming for graph " + graphId);
-            break;
-        } else {
-            try {
-                double completedBytes = std::stod(msg);
-                kg_pipeline_stream_handler_logger.debug("Worker uploaded bytes: " + std::to_string(completedBytes));
-
-                std::string updateQuery = "UPDATE graph SET uploaded_bytes = " + std::to_string(completedBytes) +
-                                          " WHERE idgraph = " + graphId + ";";
+                dbLock.lock();
+                sqlite->runUpdate(sqlStatement);
+                dbLock.unlock();
+                long long edgeCount = 0;
+                if (graph.contains("edgecount") && graph["edgecount"].is_number()) {
+                    edgeCount = graph["edgecount"].get<long long>();
+                } else if (graph.contains("edgecount")) {
+                    // fallback: try as string then stoll
+                    edgeCount = std::stoll(graph["edgecount"].get<std::string>());
+                }
 
                 auto now = std::chrono::steady_clock::now();
-                std::chrono::duration<double> elapsed_seconds = now - previousTimeStampBytesPerSecond;
+                std::chrono::duration<double> elapsed_seconds = now - previousTimeStampTriplesPerSecond;
                 double elapsed = elapsed_seconds.count();
 
-                if (elapsed > Conts::TIME_ELAPSED_LOWER_BOUND_SECONDS) {
-                    kgConstructionRates->bytesPerSecond = (completedBytes - previousBytesCount) / elapsed;
+                if (elapsed > 0.000001) {
+                    kgConstructionRates->triplesPerSecond =
+                        static_cast<double>(edgeCount - previousEdgeCount) / elapsed;
                 }
 
-                previousBytesCount = completedBytes;
-                previousTimeStampBytesPerSecond = now;
-                sqlite->runUpdate(updateQuery);
+                previousEdgeCount = edgeCount;
+                previousTimeStampTriplesPerSecond = now;
+                json partitions = metaJSON["partitions"];
 
-                if (*stopFlag) {
-                    Utils::send_str_wrapper(sockfd, "stop");
-                    *stopFlag = false;
-                    kg_pipeline_stream_handler_logger.debug("Stopping stream early as requested");
-                } else {
-                    Utils::send_str_wrapper(sockfd, "ok");
+
+
+
+
+
+                for (auto partition : partitions) {
+                    kg_pipeline_stream_handler_logger.debug(partition.dump());
+
+                    int pid = partition["idpartition"].get<int>();
+
+                    long newVertex = std::stoll(partition["vertexcount"].get<string>());
+                    long newCentralVertex = std::stoll(partition["central_vertexcount"].get<string>());
+                    long newEdge =std::stoll(partition["edgecount"].get<string>());
+                    long newCentralEdgeWithDups = std::stoll(partition["central_edgecount_with_dups"].get<string>());
+                    long newCentralEdge = std::stoll(partition["central_edgecount"].get<string>());
+
+
+
+                    if (continueKGConstruction) {
+                        PartitionMeta &meta = partitionMetaMap[pid];
+                        newVertex = meta.vertexCount += newVertex;
+                        newCentralVertex =meta.centralVertexCount += newCentralVertex;
+                        newEdge = meta.edgeCount += newEdge;
+                        newCentralEdgeWithDups = meta.centralEdgeCountWithDups += newCentralEdgeWithDups;
+                        newCentralEdge = meta.centralEdgeCount += newCentralEdge;
+                    }
+
+                    std::string sqlStatement =
+                        "UPDATE partition SET "
+                        "vertexcount = " +
+                        std::to_string(newVertex)  +
+                        ", "
+                        "central_vertexcount = " +
+                        std::to_string(newCentralVertex) +
+                        ", "
+                        "edgecount = " +
+                        std::to_string(newEdge) +
+                        ", "
+                        "central_edgecount_with_dups = " +
+                        std::to_string(newCentralEdgeWithDups) +
+                        ", "
+                        "central_edgecount = " +
+                        std::to_string(newCentralEdge) + " WHERE idpartition = " + partition["idpartition"].dump() +
+                        " AND graph_idgraph = " + partition["graph_idgraph"].dump() +
+                        "; "
+                        "INSERT INTO partition (idpartition, graph_idgraph, vertexcount, "
+                        "central_vertexcount, "
+                        "edgecount, central_edgecount_with_dups, central_edgecount) "
+                        "SELECT " +
+                        partition["idpartition"].dump() + ", " + partition["graph_idgraph"].dump() + ", " +
+                        std::to_string(newVertex) + ", " + std::to_string(newCentralVertex) + ", " +
+                       std::to_string(newEdge) + ", " + std::to_string(newCentralEdgeWithDups) + ", " +
+                        std::to_string(newCentralEdge) + " WHERE (SELECT changes() = 0)";
+                    dbLock.lock();
+                    int result = sqlite->runInsert(sqlStatement);
+                    dbLock.unlock();
+                    kg_pipeline_stream_handler_logger.debug(to_string(result));
                 }
-            } catch (std::exception& e) {
-                kg_pipeline_stream_handler_logger.error("Invalid progress message from worker: " + msg);
+
+                // dbLock.unlock();
+            } else if (msg == "done") {
+                Utils::send_str_wrapper(sockfd, "ok");
+
+                kg_pipeline_stream_handler_logger.debug("Worker completed streaming for graph " + graphId);
+                break;
+            } else {
+                try {
+                    double completedBytes = std::stod(msg);
+                    kg_pipeline_stream_handler_logger.debug("Worker uploaded bytes: " + std::to_string(completedBytes));
+
+                    std::string updateQuery = "UPDATE graph SET uploaded_bytes = " + std::to_string(completedBytes) +
+                                              " WHERE idgraph = " + graphId + ";";
+
+                    auto now = std::chrono::steady_clock::now();
+                    std::chrono::duration<double> elapsed_seconds = now - previousTimeStampBytesPerSecond;
+                    double elapsed = elapsed_seconds.count();
+
+                    if (elapsed > 0.000001) {
+                        kgConstructionRates->bytesPerSecond = (completedBytes - previousBytesCount) / elapsed;
+                    }
+
+                    previousBytesCount = completedBytes;
+                    previousTimeStampBytesPerSecond = now;
+                    sqlite->runUpdate(updateQuery);
+
+                    if (*stopFlag) {
+                        Utils::send_str_wrapper(sockfd, "stop");
+                        *stopFlag = false;
+                        kg_pipeline_stream_handler_logger.debug("Stopping stream early as requested");
+                    } else {
+                        Utils::send_str_wrapper(sockfd, "ok");
+                    }
+                } catch (std::exception& e) {
+                    kg_pipeline_stream_handler_logger.error("Invalid progress message from worker: " + msg);
+                }
             }
+        } catch (std::exception& e) {
+            kg_pipeline_stream_handler_logger.error("Unexpected exception occurred");
+            kg_pipeline_stream_handler_logger.error(e.what());
         }
     }
     close(sockfd);
@@ -1314,7 +1678,7 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
     std::string  graphId,
 
                                              int numberOfPartitions,
-                                             std::string hostNamePort, std::string llmInferenceEngine, std::string llm,
+                                             std::string hostnamePort, std::string llmInferenceEngine, std::string llm,
                                              std::string chunkSize, string localFilePath,
                                              bool continueKGConstruction, SQLiteDBInterface* sqlite,
                                              shared_ptr<atomic<bool>>& stopFlag,
@@ -1384,7 +1748,7 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
 
 
     std::vector<std::string> llmRunnerSockets;
-    std::stringstream ss(hostNamePort);
+    std::stringstream ss(hostnamePort);
     std::string entry;
 
     while (std::getline(ss, entry, ',')) {
@@ -1472,17 +1836,29 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
     if (continueKGConstruction) {
         kg_pipeline_stream_handler_logger.debug("KG construction is continued");
         long upload_bytes;
-        std::string query = "SELECT uploaded_bytes FROM graph WHERE idgraph = " + graphId + ";";
+        long nextNodeIndex;
+        long nextEdgeIndex;
+        std::string query = "SELECT uploaded_bytes, nextNodeIndex, nextEdgeIndex  FROM graph WHERE idgraph = " + graphId + ";";
         auto result = sqlite->runSelect(query);
 
         if (result.empty() || result[0].empty()) {
             // No record found
             upload_bytes = 0;
         }
+        if (result.empty() || result[1].empty()) {
+            // No record found
+            nextNodeIndex = 0;
+        }
+        if (result.empty() || result[2].empty()) {
+            // No record found
+            nextEdgeIndex = 0;
+        }
 
         try {
             kg_pipeline_stream_handler_logger.debug(result[0][0].second);
             upload_bytes = std::stoi(result[0][0].second);
+            nextNodeIndex = std::stoi(result[0][1].second);
+            nextEdgeIndex = std::stoi(result[0][2].second);
             kg_pipeline_stream_handler_logger.debug("uploaded bytes: " + std::to_string(upload_bytes));
         } catch (std::exception& e) {
             kg_pipeline_stream_handler_logger.debug(e.what());
@@ -1496,6 +1872,16 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
             close(sockfd);
             return false;
         }
+
+        if (!sendAndExpect(std::to_string(nextNodeIndex), "ok")) {
+            close(sockfd);
+            return false;
+        }
+
+        if (!sendAndExpect(std::to_string(nextEdgeIndex), "ok")) {
+            close(sockfd);
+            return false;
+        }
     } else {
         if (!sendAndExpect("n", "ok")) {
             close(sockfd);
@@ -1503,7 +1889,7 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
         }
     }
 
-    if (!sendAndExpect(hostNamePort, "ok")) {
+    if (!sendAndExpect(hostnamePort, "ok")) {
         close(sockfd);
         return false;
     }
@@ -1587,7 +1973,15 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
         kg_pipeline_stream_handler_logger.debug("Waiting for data...");
         bzero(buffer, sizeof(buffer));
         int bytes = recv(sockfd, buffer, sizeof(buffer), 0);
-        if (bytes <= 0) break;
+        if (bytes <= 0) {
+            // retry
+            streamLocalGraphToDesignatedWorker(host, port, dataPort, masterIP, graphId,  numberOfPartitions,
+                                             hostnamePort, llmInferenceEngine, llm, chunkSize, localFilePath,
+                                              true,  sqlite,
+                                             stopFlag,
+                                              kgConstructionRates);
+
+        };
 
         std::string msg(buffer, bytes);
         msg = Utils::trim_copy(msg);
@@ -1610,6 +2004,7 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
             std::string sqlStatement =
                 "UPDATE graph SET vertexcount = '" + graph["vertexcount"].dump() + "', centralpartitioncount = '" +
                 graph["centralpartitioncount"].dump() + "', edgecount = '" + graph["edgecount"].dump() +
+                    "', nextNodeIndex = '" + graph["nextNodeIndex"].dump() +"', nextEdgeIndex = '" + graph["nextEdgeIndex"].dump() +
                 "', graph_status_idgraph_status = '" + graph["graph_status_idgraph_status"].dump() +
                 "' WHERE idgraph = '" + graphId + "'";
 
@@ -1629,11 +2024,11 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
             std::chrono::duration<double> elapsed_seconds = now - previousTimeStampTriplesPerSecond;
             double elapsed = elapsed_seconds.count();
 
-            if (elapsed > Conts::TIME_ELAPSED_LOWER_BOUND_SECONDS) {
+            if (elapsed > 0.000001) {
                 kgConstructionRates->triplesPerSecond =
                     static_cast<double>(edgeCount - previousEdgeCount) / elapsed;
             }
-
+            Utils::send_job("", "triples_per_second(s)", std::to_string(kgConstructionRates->triplesPerSecond));
             previousEdgeCount = edgeCount;
             previousTimeStampTriplesPerSecond = now;
             json partitions = metaJSON["partitions"];
@@ -1688,7 +2083,7 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
                 std::chrono::duration<double> elapsed_seconds = now - previousTimeStampBytesPerSecond;
                 double elapsed = elapsed_seconds.count();
 
-                if (elapsed > Conts::TIME_ELAPSED_LOWER_BOUND_SECONDS) {
+                if (elapsed > 0.000001) {
                     kgConstructionRates->bytesPerSecond = (completedBytes - previousBytesCount) / elapsed;
                 } else {
                     kgConstructionRates->bytesPerSecond = 0.0;
@@ -1714,3 +2109,6 @@ bool Pipeline::streamLocalGraphToDesignatedWorker(std::string host, int port, in
     kg_pipeline_stream_handler_logger.info("Worker completed streaming upload for graph " + (graphId));
     return true;
 }
+
+
+

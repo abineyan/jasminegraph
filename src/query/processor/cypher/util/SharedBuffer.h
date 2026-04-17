@@ -33,6 +33,7 @@ class SharedBuffer {
 
     bool empty();
     void clear();
+    unsigned long size();
     std::optional<std::string> getWithTimeout(int timeoutSeconds);
 };
 

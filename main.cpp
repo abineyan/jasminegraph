@@ -79,6 +79,7 @@ int main(int argc, char *argv[]) {
     StatisticsCollector::init();
     thread schedulerThread(SchedulerService::startScheduler);
 
+
     if (mode == Conts::JASMINEGRAPH_RUNTIME_PROFILE_MASTER) {
         // Initialize OpenTelemetry for master process
         initializeOpenTelemetry();

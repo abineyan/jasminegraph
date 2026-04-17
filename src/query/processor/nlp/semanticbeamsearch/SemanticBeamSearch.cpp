@@ -47,6 +47,9 @@ SemanticBeamSearch::SemanticBeamSearch(
 
 std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
   // check the emb
+    auto start = std::chrono::high_resolution_clock::now();
+    // function
+
   std::vector<ScoredPath> paths;
   try {
     auto results = faissStore->search(emb, 5);
@@ -105,6 +108,13 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
   } catch (std::exception& e) {
       semantic_beam_search_logger.error(std::string("getSeedNodes exception: ") + e.what());
     }
+    auto end = std::chrono::high_resolution_clock::now();
+
+    long duration =
+  std::chrono::duration_cast<std::chrono::milliseconds>(
+      end - start).count();
+    semantic_beam_search_logger.info("[SBS] seed node retrieval took (ms): " +
+          to_string(duration));
   return paths;
 }
 
@@ -137,6 +147,8 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
 
   // 2. Multi-hop beam search
   for (int hop = 1; hop <= numHops; ++hop) {
+      auto start = std::chrono::high_resolution_clock::now();
+
     semantic_beam_search_logger.debug(
         "Hop " + std::to_string(hop) +
         " started. Current paths: " + std::to_string(paths.size()));
@@ -325,9 +337,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
           semantic_beam_search_logger.debug("Expanded path JSON: " +
                                             newPath.dump());
             semantic_beam_search_logger.debug(to_string(newHopTraces[0].hop));
-
-
-            // visitedNodes.insert(nodeData["id"].get<std::string>());
             visitedRelations.insert(relData["id"].get<std::string>());
             if (lastNode->addr == relation->source.address) {
                 relation =  relation->nextLocalSource();
@@ -353,7 +362,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
             if (lastNode->addr == relation->source.address) {
                 expandedNode =  relation->getDestination();
                 direction = "right";
-
             } else {
                 expandedNode = relation->getSource();
             }
@@ -364,7 +372,6 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
                 if (lastNode->addr == relation->source.address) {
                     relation =  relation->nextLocalSource();
                     direction = "right";
-
                 } else {
                     relation =  relation->nextLocalDestination();
                     direction = "left";
@@ -546,6 +553,8 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
     semantic_beam_search_logger.debug(
         "Waiting for all remote expansion threads to complete.");
 
+      auto edgeEmbeddingStartTime = std::chrono::high_resolution_clock::now();
+
     // check all threads completed
     std::vector<std::vector<float>> newEmbeddings;
     if (!embeddingRequestsForNewlyExploredEdges.empty()) {
@@ -557,6 +566,12 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
             newEmbeddings[i];
       }
     }
+      auto edgeEmbeddingEndTime = std::chrono::high_resolution_clock::now();
+      long duration =
+   std::chrono::duration_cast<std::chrono::milliseconds>(
+       edgeEmbeddingEndTime - edgeEmbeddingStartTime).count();
+      semantic_beam_search_logger.info("[SBS] edge embedding retrieval took (ms): " +
+             to_string(duration));
 
     // now update scores using cached embeddings
     for (auto& path : expandedPaths) {
@@ -598,11 +613,19 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
           ", score: " + std::to_string(expandedPaths[i].score));
     }
     paths = expandedPaths;
+      auto end = std::chrono::high_resolution_clock::now();
+
+       duration =
+  std::chrono::duration_cast<std::chrono::milliseconds>(
+      end - start).count();
+      semantic_beam_search_logger.info("[SBS] hop " + to_string(hop) +
+          "  took (ms): " +
+          to_string(duration));
   }
 
   // 3. Add final paths to buffer
-  semantic_beam_search_logger.info("Adding final paths to buffer. Total: " +
-                                   std::to_string(paths.size()));
+  // semantic_beam_search_logger.info("Adding final paths to buffer. Total: " +
+  //                                  std::to_string(paths.size()));
   for (size_t i = 0; i < paths.size(); ++i) {
     semantic_beam_search_logger.debug("272 Buffering path " +
                                       std::to_string(i) + ": " +
@@ -639,9 +662,8 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
         report["results"].push_back(entry);
     }
 
-    semantic_beam_search_logger.info(report.dump());
   buffer.add("-1");  // End marker
-  semantic_beam_search_logger.info("semanticMultiHopBeamSearch completed.");
+  semantic_beam_search_logger.debug("semanticMultiHopBeamSearch completed.");
 }
 
 json SemanticBeamSearch::callRemoteExpansion(
@@ -649,7 +671,7 @@ json SemanticBeamSearch::callRemoteExpansion(
     std::vector<ScoredPath>& expandedPaths,
     vector<std::string>& embeddingRequestsForNewlyExploredEdges, int hop,
     SharedBuffer& buffer) {
-  semantic_beam_search_logger.info("Starting remote expansion for partition " +
+  semantic_beam_search_logger.debug("Starting remote expansion for partition " +
                                    std::to_string(partitionId));
 
   // check worklist

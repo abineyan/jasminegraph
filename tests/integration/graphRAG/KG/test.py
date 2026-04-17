@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # JasmineGraph master config
 RESULT = subprocess.check_output(["hostname", "-I"]).decode().strip()
 SERVER_IP = RESULT.split()[0]
-HOST = "10.8.100.248"
+HOST = "127.0.0.1"
 HDFS_PORT = "9000"
 PORT = 7777
 LINE_END = b"\r\n"
