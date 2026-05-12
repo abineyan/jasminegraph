@@ -2093,9 +2093,8 @@ std::optional<std::tuple<std::string, int, int>> Utils::getWorker(string partiti
     return make_tuple(ip, stoi(portNumber), stoi(dataPort));
 }
 
-
-string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
-    util_logger.debug("Host:" + host + " Port:" + to_string(Conts::JASMINEGRAPH_BACKEND_PORT));
+string Utils::getPartitionAlgorithm(const std::string &graphID, const std::string &host) {
+    util_logger.info("Host:" + host + " Port:" + to_string(Conts::JASMINEGRAPH_BACKEND_PORT));
     bool result = true;
     int sockfd;
     char data[FED_DATA_LENGTH + 1];
@@ -2103,7 +2102,7 @@ string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
     struct sockaddr_in serv_addr;
     struct hostent hostEntry;
     struct hostent *server = nullptr;
-    std::vector<char> hostBuffer(1024);
+    std::vector<char> hostBuffer(HOSTNAME_BUFFER_SIZE);
     std::string actualHost = host;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -2128,11 +2127,12 @@ string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
     serv_addr.sin_family = AF_INET;
     memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
     serv_addr.sin_port = htons(Conts::JASMINEGRAPH_BACKEND_PORT);
-    if (Utils::connect_wrapper(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    if (Utils::connect_wrapper(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         return "";
     }
 
-    if (!Utils::sendExpectResponse(sockfd, data, PARTITION_ALGORITHM_DETAILS_ACK.length(), PARTITION_ALGORITHM_DETAILS,
+    if (!Utils::sendExpectResponse(sockfd, data, PARTITION_ALGORITHM_DETAILS_ACK.length(),
+                                   PARTITION_ALGORITHM_DETAILS,
                                    PARTITION_ALGORITHM_DETAILS_ACK)) {
         Utils::send_str_wrapper(sockfd, UPDATE_DONE);
         close(sockfd);
@@ -2144,7 +2144,10 @@ string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
     int converted_number = htonl(message_length);
     util_logger.debug("Sending content length: " + to_string(converted_number));
 
-    if (!Utils::sendIntExpectResponse(sockfd, ack, CONTENT_LENGTH_ACK.length(), converted_number, CONTENT_LENGTH_ACK)) {
+    if (!Utils::sendIntExpectResponse(sockfd, ack,
+                                      CONTENT_LENGTH_ACK.length(),
+                                      converted_number,
+                                      CONTENT_LENGTH_ACK)) {
         Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
         close(sockfd);
         return "";
@@ -2172,7 +2175,7 @@ string Utils::getPartitionAlgorithm(std::string graphID, std::string host) {
         util_logger.debug("Received worker data: " + partitionAlgorithm);
         return partitionAlgorithm;
     } else {
-        util_logger.debug("Error while reading graph data");
+        util_logger.info("Error while reading graph data");
         return "";
     }
 }
@@ -2458,7 +2461,52 @@ std::string Utils::normalizeURL(const std::string& server, const std::string& pa
     return url;
 }
 
+int Utils::createAndConnectToWorker(const std::string& host, int port, const std::string& masterIP,
+                                    char* data, size_t dataLength, bool performHS) {
+    int sockfd;
+    struct sockaddr_in serv_addr;
+    struct hostent hostEntry;
+    struct hostent *server = nullptr;
+    std::vector<char> hostBuffer(HOSTNAME_BUFFER_SIZE);
 
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        util_logger.error("Cannot create socket");
+        return -1;
+    }
+
+    // Extract hostname, removing user@ prefix if present
+    std::string actualHost = host;
+    if (actualHost.find('@') != std::string::npos) {
+        actualHost = Utils::split(actualHost, '@')[1];
+    }
+
+    if (int hostError = 0;
+        gethostbyname_r(actualHost.c_str(), &hostEntry, hostBuffer.data(), hostBuffer.size(), &server, &hostError) != 0
+            || server == nullptr) {
+        util_logger.error("ERROR, no host named " + host);
+        close(sockfd);
+        return -1;
+            }
+
+    memset((char *)&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_port = htons(port);
+
+    if (Utils::connect_wrapper(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        close(sockfd);
+        return -1;
+    }
+
+    if (performHS && !Utils::performHandshake(sockfd, data, dataLength, masterIP)) {
+        Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
+        close(sockfd);
+        return -1;
+    }
+
+    return sockfd;
+}
 
 std::vector<std::string> Utils::getUniqueLLMRunners(const std::string& hostnamePortS) {
     std::vector<std::string> llmRunnerServers;
