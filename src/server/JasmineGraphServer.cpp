@@ -1281,7 +1281,7 @@ static bool initWorkerSession(string host, int port, const string &masterIP, int
 
     struct hostent hostEntry;
     struct hostent *server = nullptr;
-    std::vector<char> hostBuffer(HOSTNAME_BUFFER_SIZE);
+    std::vector<char> hostBuffer(1024);
     if (int hostError = 0;
         gethostbyname_r(host.c_str(), &hostEntry, hostBuffer.data(), hostBuffer.size(), &server, &hostError) != 0 ||
         server == nullptr) {

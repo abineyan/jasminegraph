@@ -2468,7 +2468,7 @@ bool JasmineGraphFrontEnd::constructKGStreamHDFSCommand(std::string masterIP, in
                 "file_size_bytes, llm_runner_string, inference_engine, model, chunk_size_bytes, "
                 "kg_construction_status, hdfs_host, hdfs_port ) VALUES(\"" +
                 hdfsFilePathS + "\", \"" + path + "\", \"" + uploadStartTime + "\", \"\", \"" +
-                std::to_string(Conts::GRAPH_STATUS::NONOPERATIONAL) + "\", \"\", \"\", \"\", \"TRUE\", \"" +
+                std::to_string(Conts::GRAPH_STATUS::NON_OPERATIONAL) + "\", \"\", \"\", \"\", \"TRUE\", \"" +
                     to_string(total_file_size)  + "\", \"" +
         hostnamePortS + "\", \"" +
         llmInferenceEngineS + "\", \"" +
@@ -2697,7 +2697,7 @@ bool JasmineGraphFrontEnd::constructKGStreamLocalTXTCommand(
             "vertexcount, centralpartitioncount, edgecount, is_directed , "
             "file_size_bytes ) VALUES(\"" +
             localFilePath + "\", \"" + uploadPath + "\", \"" + uploadStartTime + "\", \"\", \"" +
-            std::to_string(Conts::GRAPH_STATUS::NONOPERATIONAL) + "\", \"\", \"\", \"\", \"TRUE\", \"" +
+            std::to_string(Conts::GRAPH_STATUS::NON_OPERATIONAL) + "\", \"\", \"\", \"\", \"TRUE\", \"" +
             to_string(total_file_size) + "\");";
         frontend_logger.info("Constructing new Knowledge Graph with new GraphID: " + to_string(newGraphID));
 

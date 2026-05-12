@@ -60,7 +60,7 @@ class JasmineGraphFrontEnd {
 
     static int getRunningHighPriorityTaskCount();
     static bool areRunningJobsForSameGraph();
-    static bool constructKGStreamHDFSCommand(const std::string &masterIP, int connectionFd, int numberOfPartitions,
+    static bool constructKGStreamHDFSCommand(string masterIP, int connFd, int numberOfPartitions,
                                              SQLiteDBInterface *sqlite, bool *loop_exit_p);
     static bool constructKGStreamLocalTXTCommand(std::string masterIP, int connFd, int numberOfPartitions,
                                           SQLiteDBInterface *sqlite, bool *loop_exit_p);
