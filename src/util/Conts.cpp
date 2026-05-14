@@ -68,7 +68,7 @@ const int Conts::GRAPH_STATUS::LOADING = 1;
 const int Conts::GRAPH_STATUS::STREAMING = 2;
 const int Conts::GRAPH_STATUS::OPERATIONAL = 3;
 const int Conts::GRAPH_STATUS::DELETING = 4;
-const int Conts::GRAPH_STATUS::NONOPERATIONAL = 5;
+const int Conts::GRAPH_STATUS::NON_OPERATIONAL = 5;
 
 const std::string Conts::TRAIN_STATUS::TRAINED = "trained";
 const std::string Conts::TRAIN_STATUS::NOT_TRAINED = "not_trained";
@@ -103,9 +103,6 @@ const std::string Conts::PARAM_KEYS::LOOP_EXIT_POINTER = "loopExitPointer";
 const std::string Conts::PARAM_KEYS::CYPHER_QUERY::QUERY_STRING = "queryString";
 
 const std::string Conts::FLAGS::MODEL_ID = "model_id";
-
-
-
 
 
 
