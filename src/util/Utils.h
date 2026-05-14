@@ -230,7 +230,7 @@ class Utils {
   static void assignPartitionToWorker(int graphId, int partitionIndex, string hostname, int port);
 
   static string getFrontendInput(int connFd);
-  static string getPartitionAlgorithm(const string &graphID,const std::string &host);
+  static string getPartitionAlgorithm(const string &graphID, const std::string &host);
   static string getGraphDirection(const string &graphID, const string &host);
 
     /**
