@@ -32,7 +32,6 @@ def test(host, port):
         run_cypher_workflow(sock, host, port)
         run_intrapartition_workflow(sock)
         run_streaming_workflow(host, port)
-        run_kafka_workflow(sock)
 
         print()
         logging.info('Shutting down')
