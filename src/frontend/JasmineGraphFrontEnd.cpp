@@ -1658,7 +1658,8 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -1730,7 +1731,8 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
             *loop_exit_p = true;
             return;
         }
-        result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+        result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+            Conts::CARRIAGE_RETURN_NEW_LINE.size());
         if (result_wr < 0) {
             frontend_logger.error("Error writing to socket");
             *loop_exit_p = true;
@@ -1753,7 +1755,8 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
     if (default_kafka == "y") {
         kafka_server_IP = Utils::getJasmineGraphProperty("org.jasminegraph.server.streaming.kafka.host");
         configs = {
-            {"metadata.broker.list", kafka_server_IP}, {"group.id", group_id}, {"auto.offset.reset", "earliest"}};
+            {"metadata.broker.list", kafka_server_IP}, {"group.id", group_id},
+            {"auto.offset.reset", "earliest"}};
     } else {
         // user need to start relevant kafka cluster using relevant IP address
         // read relevant IP address from given file path
@@ -1907,7 +1910,8 @@ static bool writeSocketLine(int connectionFd, const std::string &message, bool *
         return false;
     }
 
-    resultWr = write(connectionFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    resultWr = write(connectionFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+        Conts::CARRIAGE_RETURN_NEW_LINE.size());
     if (resultWr < 0) {
         frontend_logger.error("Error writing to socket");
         *loop_exit_p = true;
@@ -1950,7 +1954,8 @@ static bool requestGraphIdAndValidate(int connectionFd, SQLiteDBInterface *sqlit
     std::string graphQuery = "SELECT idgraph, name FROM graph WHERE idgraph = '" + graphId + "'";
     if (std::vector<std::vector<std::pair<std::string, std::string>>> graphResults = sqlite->runSelect(graphQuery);
         graphResults.empty()) {
-        return sendClientErrorAndExit(connectionFd, "Graph not found: " + graphId, "Graph not found", loop_exit_p);
+        return sendClientErrorAndExit(connectionFd, "Graph not found: " + graphId,
+            "Graph not found", loop_exit_p);
     }
 
     return true;
@@ -2017,7 +2022,8 @@ static bool loadWorkerPartitions(SQLiteDBInterface *sqlite, const std::string &g
         "SELECT DISTINCT worker_idworker, partition_idpartition "
         "FROM worker_has_partition INNER JOIN worker ON worker_has_partition.worker_idworker=worker.idworker "
         "WHERE partition_graph_idgraph=" + graphId;
-    std::vector<std::vector<std::pair<std::string, std::string>>> partitionResults = sqlite->runSelect(partitionQuery);
+    std::vector<std::vector<std::pair<std::string, std::string>>> partitionResults =
+        sqlite->runSelect(partitionQuery);
 
     if (partitionResults.empty()) {
         return sendClientErrorAndExit(connectionFd, "No partitions found for graph ID: " + graphId,
@@ -2064,11 +2070,13 @@ static bool prepareHdfsDestination(HDFSConnector &hdfsConnector, const std::stri
         return sendClientErrorAndExit(connectionFd,
                                       "Failed to create parent directory for destination file: " +
                                           mergedParentDirectory,
-                                      "Failed to create parent directory for destination file", loop_exit_p);
+                                      "Failed to create parent directory for destination file",
+                                      loop_exit_p);
     }
 
     if (!hdfsConnector.createDirectory(shardDirectory)) {
-        return sendClientErrorAndExit(connectionFd, "Failed to create HDFS shard directory: " + shardDirectory,
+        return sendClientErrorAndExit(connectionFd, "Failed to create HDFS shard directory: " +
+            shardDirectory,
                                       "Failed to create HDFS shard directory", loop_exit_p);
     }
 
@@ -2097,7 +2105,8 @@ static bool exportPartitionShard(const std::string &masterIP, const std::string 
     struct hostent *server = nullptr;
     int hostErrno = 0;
     std::string hostBuffer(HOSTNAME_BUFFER_SIZE, '\0');
-    if (int hostLookupResult = gethostbyname_r(host.c_str(), &hostEntry, hostBuffer.data(), hostBuffer.size(), &server,
+    if (int hostLookupResult = gethostbyname_r(host.c_str(), &hostEntry, hostBuffer.data(),
+        hostBuffer.size(), &server,
                                                &hostErrno);
         hostLookupResult != 0 || server == nullptr) {
         frontend_logger.error("No host named " + host);
@@ -2254,7 +2263,8 @@ static bool mergeShardsAndRespond(HDFSConnector &hdfsConnector, const std::strin
     }
 
     if (exportResult.writeError || exportResult.processedPartitions != exportResult.totalPartitions) {
-        return sendClientErrorAndExit(connectionFd, "Failed to write one or more graph shards to HDFS", ERROR,
+        return sendClientErrorAndExit(connectionFd, "Failed to write one or more graph shards to HDFS",
+            ERROR,
                                       loop_exit_p);
     }
 
@@ -2315,7 +2325,9 @@ static void send_graph_hdfs_command_impl(const std::string &masterIP, int connec
 
     auto hdfsConnector = std::make_unique<HDFSConnector>(hdfsServerIp, hdfsPort);
     std::string shardDirectory;
-    if (!prepareHdfsDestination(*hdfsConnector, hdfsDestinationFilePath, shardDirectory, connectionFd, loop_exit_p)) {
+    if (!prepareHdfsDestination(*hdfsConnector, hdfsDestinationFilePath, shardDirectory,
+
+    connectionFd, loop_exit_p)) {
         return;
     }
 
@@ -2886,7 +2898,8 @@ bool JasmineGraphFrontEnd::constructKGStreamHDFSCommand(std::string masterIP, in
                 *loop_exit_p = true;
                 return false;
             } else {
-                frontend_logger.info("Verified model '" + llmS + "' exists on " + llmInferenceEngineS + " server.");
+                frontend_logger.info("Verified model '" + llmS + "' exists on " +
+                    llmInferenceEngineS + " server.");
             }
         }
     }
@@ -2949,7 +2962,8 @@ bool JasmineGraphFrontEnd::constructKGStreamHDFSCommand(std::string masterIP, in
                 *loop_exit_p = true;
                 return false;
             }
-            resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (resultWr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3028,8 +3042,10 @@ bool JasmineGraphFrontEnd::constructKGStreamHDFSCommand(std::string masterIP, in
 
         std::make_shared<std::atomic<bool>>(false);
         bool success = Pipeline::streamGraphToDesignatedWorker(
-            designatedWorker.hostname, designatedWorker.port, masterIP, std::to_string(newGraphID), numberOfPartitions,
-            hdfsServerIp, hdfsPort, hostnamePortS, llmInferenceEngineS, llm, chunkSizeS, hdfsFilePathS, graphExits,
+            designatedWorker.hostname, designatedWorker.port, masterIP, std::to_string(newGraphID),
+            numberOfPartitions,
+            hdfsServerIp, hdfsPort, hostnamePortS, llmInferenceEngineS, llm, chunkSizeS,
+            hdfsFilePathS, graphExits,
             sqlite, stopFlag, kgConstructionRates[newGraphID]);
 
         if (!success) {
@@ -3330,9 +3346,12 @@ static void stop_stream_kafka_command(int connFd, const std::string &topicName, 
             kgConstructionRates[newGraphID] = std::make_shared<KGConstructionRate>();
     kgConstructionRates[newGraphID]->bytesPerSecond = 0.0;
     kgConstructionRates[newGraphID]->triplesPerSecond = 0.0;
-            Pipeline::streamLocalGraphToDesignatedWorker(worker.hostname, worker.port, worker.dataPort, masterIP,
-                                                 std::to_string(newGraphID), numberOfPartitions, hostnamePortS, llmEngineS,
-                                                 llmS, chunkSizeS, localFilePath, graphExists, sqlite, stopFlag,
+            Pipeline::streamLocalGraphToDesignatedWorker(worker.hostname, worker.port, worker.dataPort,
+                masterIP,
+                                                 std::to_string(newGraphID), numberOfPartitions,
+                                                 hostnamePortS, llmEngineS,
+                                                 llmS, chunkSizeS, localFilePath, graphExists, sqlite,
+                                                 stopFlag,
                                                  kgConstructionRates[newGraphID]);
         });
 
@@ -3377,7 +3396,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3416,7 +3436,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
         }
 
         static void triangles_command(std::string masterIP, int connFd, SQLiteDBInterface* sqlite,
-                                      PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler, bool* loop_exit_p) {
+                                      PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler,
+                                      bool* loop_exit_p) {
             // add RDF graph
             int uniqueId = JasmineGraphFrontEndCommon::getUid();
             int result_wr = write(connFd, GRAPHID_SEND.c_str(), GRAPHID_SEND.size());
@@ -3425,7 +3446,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3452,7 +3474,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     return;
                 }
 
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3464,7 +3487,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3481,7 +3505,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
 
                 priority = Utils::trim_copy(priority);
 
-                if (!(std::find_if(priority.begin(), priority.end(), [](unsigned char c) { return !std::isdigit(c); }) ==
+                if (!(std::find_if(priority.begin(), priority.end(), [](unsigned char c)
+                    { return !std::isdigit(c); }) ==
                       priority.end())) {
                     *loop_exit_p = true;
                     string error_message = "Priority should be numeric and > 1 or empty";
@@ -3491,7 +3516,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                         return;
                     }
 
-                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                        Conts::CARRIAGE_RETURN_NEW_LINE.size());
                     if (result_wr < 0) {
                         frontend_logger.error("Error writing to socket");
                     }
@@ -3512,7 +3538,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 if (threadPriority > Conts::DEFAULT_THREAD_PRIORITY) {
                     // All high priority threads will be set the same high priority level
                     threadPriority = Conts::HIGH_PRIORITY_DEFAULT_VALUE;
-                    graphSLA = JasmineGraphFrontEndCommon::getSLAForGraphId(sqlite, perfSqlite, graph_id, TRIANGLES,
+                    graphSLA = JasmineGraphFrontEndCommon::getSLAForGraphId(sqlite, perfSqlite,
+                        graph_id, TRIANGLES,
                                                                             Conts::SLA_CATEGORY::LATENCY);
                     jobDetails.addParameter(Conts::PARAM_KEYS::GRAPH_SLA, std::to_string(graphSLA));
                 }
@@ -3554,7 +3581,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                         frontend_logger.error("Error writing to socket");
                         return;
                     }
-                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                        Conts::CARRIAGE_RETURN_NEW_LINE.size());
                     if (result_wr < 0) {
                         frontend_logger.error("Error writing to socket");
                     }
@@ -3578,7 +3606,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3599,7 +3628,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
             }
         }
 
-        static void streaming_triangles_command(std::string masterIP, int connFd, JobScheduler* jobScheduler, bool* loop_exit_p,
+        static void streaming_triangles_command(std::string masterIP, int connFd,
+            JobScheduler* jobScheduler, bool* loop_exit_p,
                                                 int numberOfPartitions, bool* strian_exit) {
             int result_wr = write(connFd, GRAPHID_SEND.c_str(), FRONTEND_COMMAND_LENGTH);
             if (result_wr < 0) {
@@ -3607,7 +3637,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3631,7 +3662,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3660,7 +3692,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *strian_exit = false;
             }
 
-            std::thread schedulerThread(JasmineGraphFrontEnd::scheduleStrianJobs, std::ref(jobDetails), std::ref(jobQueue),
+            std::thread schedulerThread(JasmineGraphFrontEnd::scheduleStrianJobs,
+                std::ref(jobDetails), std::ref(jobQueue),
                                         jobScheduler, std::ref(strian_exit));
 
             while (!(*strian_exit)) {
@@ -3678,19 +3711,23 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                             return;
                         }
                         result_wr =
-                            write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                            write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                                Conts::CARRIAGE_RETURN_NEW_LINE.size());
                         if (result_wr < 0) {
                             frontend_logger.error("Error writing to socket");
                         }
                         return;
                     }
 
-                    std::string triangleCount = jobResponse.getParameter(Conts::PARAM_KEYS::STREAMING_TRIANGLE_COUNT);
+                    std::string triangleCount = jobResponse.getParameter(
+
+                    Conts::PARAM_KEYS::STREAMING_TRIANGLE_COUNT);
                     std::time_t begin_time_t = std::chrono::system_clock::to_time_t(request.getBegin());
                     std::time_t end_time_t = std::chrono::system_clock::to_time_t(jobResponse.getEndTime());
                     auto dur = jobResponse.getEndTime() - request.getBegin();
                     auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
-                    frontend_logger.info("Streaming triangle " + request.getJobId() + " Count : " + triangleCount +
+                    frontend_logger.info("Streaming triangle " + request.getJobId() + " Count : " +
+                        triangleCount +
                                          " Time Taken: " + to_string(msDuration) + " milliseconds");
                     std::string out = triangleCount + " Time Taken: " + to_string(msDuration) +
                                       " ms , Begin Time: " + std::ctime(&begin_time_t) +
@@ -3701,7 +3738,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                         *loop_exit_p = true;
                         return;
                     }
-                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                        Conts::CARRIAGE_RETURN_NEW_LINE.size());
                     if (result_wr < 0) {
                         frontend_logger.error("Error writing to socket");
                         *loop_exit_p = true;
@@ -3723,7 +3761,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3749,7 +3788,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3767,7 +3807,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3782,7 +3823,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3808,7 +3850,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3826,7 +3869,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -3849,7 +3893,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3909,7 +3954,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3924,7 +3970,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            string flags = Conts::FLAGS::GRAPH_ID + " " + Conts::FLAGS::LEARNING_RATE + " " + Conts::FLAGS::BATCH_SIZE + " " +
+            string flags = Conts::FLAGS::GRAPH_ID + " " + Conts::FLAGS::LEARNING_RATE + " " +
+                Conts::FLAGS::BATCH_SIZE + " " +
                            Conts::FLAGS::VALIDATE_ITER + " " + Conts::FLAGS::EPOCHS;
             result_wr = write(connFd, flags.c_str(), flags.size());
             if (result_wr < 0) {
@@ -3932,7 +3979,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -3990,7 +4038,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -4000,10 +4049,12 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
             auto* server = JasmineGraphServer::getInstance();
             if (Utils::getJasmineGraphProperty("org.jasminegraph.fl.org.training") == "true") {
                 frontend_logger.info("Initiate org communication");
-                JasmineGraphServer::initiateOrgCommunication(graphID, trainData, sqlite, server->masterHost);
+                JasmineGraphServer::initiateOrgCommunication(graphID, trainData, sqlite,
+                    server->masterHost);
             } else {
                 frontend_logger.info("Initiate communication");
-                JasmineGraphServer::initiateCommunication(graphID, trainData, sqlite, server->masterHost);
+                JasmineGraphServer::initiateCommunication(graphID, trainData, sqlite,
+                    server->masterHost);
             }
 
             result_wr = write(connFd, DONE.c_str(), FRONTEND_COMMAND_LENGTH);
@@ -4012,7 +4063,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4029,7 +4081,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4054,7 +4107,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4070,7 +4124,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4095,7 +4150,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4103,7 +4159,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
         }
 
         static void page_rank_command(std::string masterIP, int connFd, SQLiteDBInterface* sqlite,
-                                      PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler, bool* loop_exit_p) {
+                                      PerformanceSQLiteDBInterface* perfSqlite,
+                                      JobScheduler* jobScheduler, bool* loop_exit_p) {
             frontend_logger.info("Calculating Page Rank");
 
             int result_wr = write(connFd, GRAPHID_SEND.c_str(), FRONTEND_COMMAND_LENGTH);
@@ -4112,7 +4169,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4168,7 +4226,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4182,7 +4241,9 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
             string priority(priority_data);
             priority = Utils::trim_copy(priority);
 
-            if (!(std::find_if(priority.begin(), priority.end(), [](unsigned char c) { return !std::isdigit(c); }) ==
+            if (!(std::find_if(priority.begin(), priority.end(), [](unsigned char c) {
+                return !std::isdigit(c);
+            }) ==
                   priority.end())) {
                 *loop_exit_p = true;
                 string error_message = "Priority should be numeric and > 1 or empty";
@@ -4192,7 +4253,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     return;
                 }
 
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                 }
@@ -4211,7 +4273,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
             if (threadPriority > Conts::DEFAULT_THREAD_PRIORITY) {
                 // All high priority threads will be set the same high priority level
                 threadPriority = Conts::HIGH_PRIORITY_DEFAULT_VALUE;
-                graphSLA = JasmineGraphFrontEndCommon::getSLAForGraphId(sqlite, perfSqlite, graphID, PAGE_RANK,
+                graphSLA = JasmineGraphFrontEndCommon::getSLAForGraphId(sqlite, perfSqlite, graphID,
+                    PAGE_RANK,
                                                                         Conts::SLA_CATEGORY::LATENCY);
                 jobDetails.addParameter(Conts::PARAM_KEYS::GRAPH_SLA, std::to_string(graphSLA));
             }
@@ -4256,7 +4319,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     frontend_logger.error("Error writing to socket");
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                 }
@@ -4294,7 +4358,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4319,7 +4384,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4335,7 +4401,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4360,7 +4427,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4379,7 +4447,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -4421,7 +4490,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                     *loop_exit_p = true;
                     return;
                 }
-                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                    Conts::CARRIAGE_RETURN_NEW_LINE.size());
                 if (result_wr < 0) {
                     frontend_logger.error("Error writing to socket");
                     *loop_exit_p = true;
@@ -4471,7 +4541,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4520,7 +4591,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
@@ -4540,7 +4612,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
 
             string slaCategoryIds;
 
-            for (std::vector<vector<pair<string, string>>>::iterator i = categoryResults.begin(); i != categoryResults.end();
+            for (std::vector<vector<pair<string, string>>>::iterator i =
+                categoryResults.begin(); i != categoryResults.end();
                  ++i) {
                 for (std::vector<pair<string, string>>::iterator j = (i->begin()); j != i->end(); ++j) {
                     slaCategoryIds = slaCategoryIds + "'" + j->second + "',";
@@ -4551,7 +4624,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
 
             std::stringstream ss;
             std::vector<vector<pair<string, string>>> v =
-                perfSqlite->runSelect("SELECT graph_id, partition_count, sla_value FROM graph_sla where id_sla_category in (" +
+                perfSqlite->runSelect("SELECT graph_id, partition_count, "
+                                      "sla_value FROM graph_sla where id_sla_category in (" +
                                       adjustedIdList + ");");
             for (std::vector<vector<pair<string, string>>>::iterator i = v.begin(); i != v.end(); ++i) {
                 std::stringstream slass;
@@ -4590,7 +4664,8 @@ static void kafka_topics_command(int connFd, SQLiteDBInterface *sqlite, bool *lo
                 *loop_exit_p = true;
                 return;
             }
-            resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                Conts::CARRIAGE_RETURN_NEW_LINE.size());
             if (resultWr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;
