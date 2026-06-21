@@ -78,19 +78,9 @@ faiss::idx_t FaissIndex::add(const std::vector<float>& embedding,
             "[FaissIndex] Embedding added to index. Updating nodeEmbeddingMap.");
         nodeIdToEmbeddingIdMap[nodeId] = new_id;
         embeddingIdToNodeIdMap[new_id] = nodeId;
-
-        // if (index->ntotal % 1000 == 0) {
-        //     lock.unlock();
-        //     faiss_index_logger.info("saving faiss index periodically");
-        //     save(filePath);
-        //     faiss_index_logger.info("saved faiss index periodically");
-        //
-        // }
         lock.unlock();
         return new_id;
     } catch (const std::exception& e) {
-       // faiss_index_logger.error(std::string("Failed to reconstruct embedding for ID ") + nodeId + ": " +
-       //     e.what());
         throw std::runtime_error("Failed to reconstruct embedding for ID " + nodeId);
     }
 }
@@ -185,22 +175,6 @@ void FaissIndex::load(const std::string& filepath) {
       throw std::runtime_error("Loaded FAISS index is not L2 Flat index.");
     }
   } else {
-    // Create a new index if file not found
-      // int nlist = 100000;         // number of clusters (IVF)
-      // int m = 64;                 // PQ number of sub-vectors
-      // int nbits = 8;              // 8-bit quantization
-      //
-      // faiss::IndexFlatL2 quantizer(dim);
-      //
-      // faiss::IndexIVFPQ* index = new faiss::IndexIVFPQ(
-      //     &quantizer,
-      //     dim,
-      //     nlist,     // IVF clusters
-      //     m,         // number of PQ subvectors
-      //     nbits      // bits per subvector
-      // );
-      // index->use_precomputed_table = 1;
-      // index->train(num_train_vectors, train_data);
     index = new faiss::IndexFlatL2(dim);
   }
 

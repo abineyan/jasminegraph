@@ -558,8 +558,6 @@ static void send_uploaded_bytes(int connFd, SQLiteDBInterface *sqlite, bool *loo
     }
 }
 
-
-
 // Function to extract the file name from the URL
 std::string extractFileNameFromURL(const std::string& url) {
     std::regex urlRegex("([^/]+)$");

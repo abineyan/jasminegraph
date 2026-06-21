@@ -1403,9 +1403,6 @@ bool Utils::sendFileChunkToWorker(std::string host, int port, int dataPort, std:
         response = Utils::read_str_trim_wrapper(sockfd, data, FED_DATA_LENGTH);
         if (response.compare(JasmineGraphInstanceProtocol::FILE_RECV_WAIT) == 0) {
             util_logger.debug("Received: " + JasmineGraphInstanceProtocol::FILE_RECV_WAIT);
-            // sleep(1);
-            // std::this_thread::sleep_for(std::chrono::milliseconds(3000)); // small wait
-
             continue;
         } else if (response.compare(JasmineGraphInstanceProtocol::FILE_ACK) == 0) {
             util_logger.debug("Received: " + JasmineGraphInstanceProtocol::FILE_ACK);
@@ -1646,11 +1643,6 @@ bool Utils::sendQueryPlanToWorker(const std::string& host, int port, const std::
         return false;
     }
 
-    // if (!Utils::performHandshake(sockfd, data, FED_DATA_LENGTH, masterIP)) {
-    //     Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
-    //     close(sockfd);
-    //     return false;
-    // }
 
     if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
                                    JasmineGraphInstanceProtocol::QUERY_START,
@@ -1975,15 +1967,6 @@ bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string mas
     util_logger.debug(ack);
 
   util_logger.debug("Received ACK after query ");
-
-
-  // char start[ACK_MESSAGE_SIZE] = {0};
-  // recv(sockfd, &start, sizeof(start), 0);
-  // std::string start_msg(start);
-  // char ack2[ACK_MESSAGE_SIZE] = {0};
-  // recv(sockfd, &ack2, sizeof(start), 0);
-  // std::string ack2_msg(ack2);
-  // util_logger.debug(start_msg);
   util_logger.info(
       "Semantic Beam Search request sent successfully");
   while (true) {

@@ -129,6 +129,7 @@ void AgentPlanExecutor::execute() {
     // Protocol sequence
     Utils::send_str_wrapper(sockfd, "initiate-agent-plan");
     sendField("graphId", graphId);
+    sendField("masterIp", masterIP);
     sendField("query", query);
     sendField("llmRunner", llmRunner);
     sendField("llmEngine", inferenceEngine);

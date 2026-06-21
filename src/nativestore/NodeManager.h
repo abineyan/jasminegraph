@@ -37,12 +37,7 @@ class NodeManager {
     // static const std::string FILE_MODE;
     unsigned long INDEX_KEY_SIZE = 6;  // Size of an index key entry in bytes
     std::string indexDBPath;
-
     std::string edgeIndexDBPath;
-    // pthread_mutex_t lockEdgeAdd;
-
-
-
 
     void persistNodeIndex();
     void persistEdgeIndex();

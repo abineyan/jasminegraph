@@ -19,6 +19,7 @@ from integration_workflow_cypher import run_cypher_workflow
 from integration_workflow_intrapartition import run_intrapartition_workflow
 from integration_workflow_streaming import run_streaming_workflow
 
+
 def test(host, port):
     """Test JasmineGraph server by running all integration workflows."""
     common.reset_state()

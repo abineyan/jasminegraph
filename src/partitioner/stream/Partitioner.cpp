@@ -206,7 +206,8 @@ partitionedEdge Partitioner::fennelPartitioning(std::pair<std::string, std::stri
         if (secondVertextNeighbors.size() != 0) {
             if (secondVertextNeighbors.find(edge.first) != secondVertextNeighbors.end())
                 return {{edge.first, id},
-                        {edge.second, id}};  // Nothing to do, edge already exisit, Because of the symmetrical nature of
+                        {edge.second, id}};
+            // Nothing to do, the edge already exist
         }
 
 
