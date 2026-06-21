@@ -556,6 +556,7 @@ static void send_uploaded_bytes(int connFd, SQLiteDBInterface *sqlite, bool *loo
     } else {
         ui_frontend_logger.debug("UPBYTES sent successfully.");
     }
+}void* uifrontendservicesesion(std::string masterIP, int connFd, SQLiteDBInterface* sqlite, PerformanceSQLiteDBInterface* perfSqlite, JobScheduler* jobScheduler){
 }
 
 

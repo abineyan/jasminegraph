@@ -74,7 +74,6 @@ void SemanticBeamSearchExecutor::execute() {
     int count = 0;
 
     std::vector<std::thread> workerThreads;
-    count = 0;
     for (auto worker : workerList) {
         workerThreads.emplace_back(doSemanticBeamSearch, worker.hostname,
                                    worker.port, masterIP, std::stoi(graphId), count,

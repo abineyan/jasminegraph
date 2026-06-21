@@ -1,4 +1,4 @@
-"""Copyright 2025 JasmineGraph Team
+"""Copyright 206 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # JasmineGraph master config
 RESULT = subprocess.check_output(["hostname", "-I"]).decode().strip()
 SERVER_IP = RESULT.split()[0]
-HOST = "10.8.100.248"
+HOST = "127.0.0.1"
 HDFS_PORT = "9000"
 PORT = 7777
 LINE_END = b"\r\n"

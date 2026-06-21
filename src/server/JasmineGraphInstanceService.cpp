@@ -3089,7 +3089,7 @@ static void streaming_triangles_command(
 
     if (incrementalLocalStoreMap.find(graphIdentifier) == incrementalLocalStoreMap.end()) {
         incrementalLocalStoreInstance = JasmineGraphInstanceService::loadStreamingStore(
-            graphID, partitionId, incrementalLocalStoreMap, "app", false);
+            graphID, partitionId, incrementalLocalStoreMap, NodeManager::FILE_MODE, false);
     } else {
         incrementalLocalStoreInstance = incrementalLocalStoreMap[graphIdentifier];
     }
@@ -3275,7 +3275,6 @@ static void streaming_kg_construction(
     *loop_exit_p = true;
     return;
   }
-    // Parse workerIP:port:replicationCount (comma separated)
     string workersIP =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
 
@@ -3339,7 +3338,8 @@ static void streaming_kg_construction(
         // Trim spaces
         entry.erase(0, entry.find_first_not_of(" \t\r\n"));
         entry.erase(entry.find_last_not_of(" \t\r\n") + 1);
-        if (entry.empty()) continue;
+        if (entry.empty())
+            continue;
 
         // Find last colon
         size_t lastColon = entry.rfind(':');
@@ -3505,7 +3505,6 @@ static void streaming_kg_construction_local(
     *loop_exit_p = true;
     return;
   }
-    // Parse workerIP:port:replicationCount (comma separated)
     string workersIP =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
 
@@ -3568,7 +3567,8 @@ static void streaming_kg_construction_local(
         // Trim spaces
         entry.erase(0, entry.find_first_not_of(" \t\r\n"));
         entry.erase(entry.find_last_not_of(" \t\r\n") + 1);
-        if (entry.empty()) continue;
+        if (entry.empty())
+            continue;
 
         // Find last colon
         size_t lastColon = entry.rfind(':');
@@ -5460,6 +5460,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
     };
 
     std::string graphId = readField("graphId");
+    std::string masterIp = readField("masterIp");
     std::string query = readField("query");
     std::string llmRunner = readField("llmRunner");
     std::string llmEngine = readField("llmEngine");
@@ -5520,8 +5521,8 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
                 int dataPort = std::get<2>(workers[i]);
 
                 workerThreads.emplace_back(
-                    [host, port, i, &obj, &bufferPool, numberOfPartitions, &graphId, &workerListStr]() {
-                        Utils::sendSbsQueryPlanToWorker(host, port, "127.0.0.1", std::stoi(graphId), i, obj.query,
+                    [host, port, i, &obj, &bufferPool, numberOfPartitions, &graphId, &workerListStr, masterIp]() {
+                        Utils::sendSbsQueryPlanToWorker(host, port, masterIp, std::stoi(graphId), i, obj.query,
                                                         *bufferPool[i], workerListStr);
 
                         instance_logger.info("[GraphRAG][SBS][Worker-" + std::to_string(i) + "] Query sent");
