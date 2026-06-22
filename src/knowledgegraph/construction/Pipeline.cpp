@@ -165,10 +165,11 @@ void Pipeline::streamFromHDFSIntoBuffer() {
         kg_pipeline_stream_handler_logger.debug("Read chunk " + std::to_string(chunk_idx) + " with " +
                                                std::to_string(read_bytes) + " bytes");
         kg_pipeline_stream_handler_logger.debug("Current leftover size: " + std::to_string(leftover.size()));
-        size_t split_pos = chunk_text.rfind("\n\n");
+
+        size_t split_pos = chunk_text.rfind(Conts::HIGH_LEVEL_CHUNK_SEPERATOR);
         if (split_pos == std::string::npos) {
             // If no paragraph boundary, split at last newline
-            split_pos = chunk_text.find_last_of('\n');
+            split_pos = chunk_text.find_last_of(Conts::LOW_LEVEL_CHUNK_SEPERATOR);
         }
         // Find last newline to keep only complete lines in chunk pushed to
         // dataBuffer
@@ -186,7 +187,7 @@ void Pipeline::streamFromHDFSIntoBuffer() {
             std::stod(chunkSize)*0.3 : 0;
 
         // make sure leftover starts at a newline
-        size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
+        size_t newline_pos = full_lines_chunk.find(Conts::LOW_LEVEL_CHUNK_SEPERATOR, overlap_start);
         if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
             leftover = full_lines_chunk.substr(newline_pos + 1);
         } else {
@@ -310,7 +311,7 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
         std::string chunk_text = leftover + std::string(buffer.data(), read_bytes);
 
         // Handle overlap
-        size_t last_newline = chunk_text.find_last_of('\n');
+        size_t last_newline = chunk_text.find_last_of(Conts::LOW_LEVEL_CHUNK_SEPERATOR);
         if (last_newline == std::string::npos) {
             leftover = chunk_text;
             continue;
@@ -320,7 +321,7 @@ void Pipeline::streamFromLocalFileIntoBuffer() {
 
         // Overlap handling like HDFS version
         size_t overlap_start = (full_lines_chunk.size() > OVERLAP_BYTES) ? full_lines_chunk.size() - OVERLAP_BYTES : 0;
-        size_t newline_pos = full_lines_chunk.find('\n', overlap_start);
+        size_t newline_pos = full_lines_chunk.find(Conts::LOW_LEVEL_CHUNK_SEPERATOR, overlap_start);
         if (newline_pos != std::string::npos && newline_pos + 1 < full_lines_chunk.size()) {
             leftover = full_lines_chunk.substr(newline_pos + 1);
             full_lines_chunk = full_lines_chunk.substr(0, newline_pos + 1);
