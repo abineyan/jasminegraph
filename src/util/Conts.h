@@ -58,7 +58,9 @@ class Conts {
     std::string BATCH_UPLOAD_FILE_LIST = "conf/batch-upload.txt";
     std::string JASMINEGRAPH_SERVER_PROPS_FILE = "conf/acacia-server.properties";
     std::string JASMINEGRAPH_SERVER_PUBLIC_HOSTS_FILE = "machines_public.txt";
-    std::string JASMINEGRAPH_SERVER_PRIVATE_HOSTS_FILE = "machines.txt";static std::string LOW_LEVEL_CHUNK_SEPERATOR;static std::string HIGH_LEVEL_CHUNK_SEPERATOR;
+    std::string JASMINEGRAPH_SERVER_PRIVATE_HOSTS_FILE = "machines.txt";
+        static std::string LOW_LEVEL_CHUNK_SEPERATOR;
+        static std::string HIGH_LEVEL_CHUNK_SEPERATOR;
     static const int SEMANTIC_LOWER_THRESHOLD;
     static const int TIME_ELAPSED_LOWER_BOUND_SECONDS;
     static const int TOP_RELEVANT_INFORMATION_COUNT;
